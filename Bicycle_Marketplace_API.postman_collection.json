@@ -1,0 +1,342 @@
+{
+  "info": {
+    "name": "Bicycle Marketplace API",
+    "description": "API collection cho Website Kết Nối Mua Bán Xe Đạp Thể Thao Cũ",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5000/api",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register Buyer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"buyer@example.com\",\n  \"password\": \"123456\",\n  \"full_name\": \"Nguyễn Văn Buyer\",\n  \"phone\": \"0901234567\",\n  \"role\": \"buyer\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "register"]
+            }
+          }
+        },
+        {
+          "name": "Register Seller",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"seller@example.com\",\n  \"password\": \"123456\",\n  \"full_name\": \"Nguyễn Văn Seller\",\n  \"phone\": \"0909999999\",\n  \"role\": \"seller\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "register"]
+            }
+          }
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.success && jsonData.data.token) {",
+                  "    pm.collectionVariables.set(\"token\", jsonData.data.token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"seller@example.com\",\n  \"password\": \"123456\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "Get Profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/profile",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "profile"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Bikes",
+      "item": [
+        {
+          "name": "Search Bikes",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/bikes/search?page=1&limit=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikes", "search"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "keyword",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Bike",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"category_id\": 1,\n  \"brand_id\": 1,\n  \"title\": \"Giant TCR Advanced Pro - Xe đạp đua Carbon\",\n  \"description\": \"Xe đạp đua Giant TCR Advanced Pro, khung carbon cao cấp, groupset Shimano 105, bánh xe fulcrum, đã qua sử dụng 6 tháng, tình trạng 95%.\",\n  \"price\": 25000000,\n  \"condition\": \"like_new\",\n  \"frame_size\": \"52cm\",\n  \"year_of_manufacture\": 2023,\n  \"color\": \"Đen/Đỏ\",\n  \"location\": \"Quận 1, TP.HCM\",\n  \"specs\": {\n    \"frame_material\": \"Carbon\",\n    \"brake_type\": \"Shimano 105\",\n    \"gear_system\": \"2x11 speed\",\n    \"wheel_size\": \"700c\",\n    \"usage_history\": \"Đã sử dụng 6 tháng cho việc tập luyện\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/bikes",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikes"]
+            }
+          }
+        },
+        {
+          "name": "Get My Bikes",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/bikes/my/listings",
+              "host": ["{{baseUrl}}"],
+              "path": ["bikes", "my", "listings"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Orders",
+      "item": [
+        {
+          "name": "Create Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bike_id\": \"bike-uuid-here\",\n  \"deposit_amount\": 5000000,\n  \"notes\": \"Tôi muốn xem xe vào cuối tuần\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/orders",
+              "host": ["{{baseUrl}}"],
+              "path": ["orders"]
+            }
+          }
+        },
+        {
+          "name": "Get My Orders",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders/my-orders",
+              "host": ["{{baseUrl}}"],
+              "path": ["orders", "my-orders"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Wishlist",
+      "item": [
+        {
+          "name": "Add to Wishlist",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bike_id\": \"bike-uuid-here\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/wishlist",
+              "host": ["{{baseUrl}}"],
+              "path": ["wishlist"]
+            }
+          }
+        },
+        {
+          "name": "Get Wishlist",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/wishlist",
+              "host": ["{{baseUrl}}"],
+              "path": ["wishlist"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "item": [
+        {
+          "name": "Get Statistics",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/statistics",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "statistics"]
+            }
+          }
+        },
+        {
+          "name": "Get All Users",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/users",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "users"]
+            }
+          }
+        },
+        {
+          "name": "Get Pending Bikes",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/bikes/pending",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "bikes", "pending"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
