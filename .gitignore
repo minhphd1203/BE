@@ -8,3 +8,4 @@ uploads/*
 dist/
 build/
 .vercel
+neon-connection.txt
