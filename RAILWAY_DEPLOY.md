@@ -24,6 +24,7 @@ git commit -m "Initial commit - Bike Exchange System API"
 ### Cách 1: Deploy từ GitHub (Khuyên dùng)
 
 1. Push code lên GitHub:
+
    ```powershell
    # Tạo repo mới trên GitHub (tên: BESWP)
    # Sau đó:
@@ -46,6 +47,7 @@ git commit -m "Initial commit - Bike Exchange System API"
    - Hoặc chọn **"Empty Project"** rồi **"Deploy from local"**
 
 2. Cài Railway CLI:
+
    ```powershell
    npm install -g @railway/cli
    ```
@@ -69,14 +71,17 @@ NODE_ENV=production
 ```
 
 **Lấy DATABASE_URL:**
+
 - Copy từ file `.env` hiện tại của bạn (đã có sẵn từ Neon)
 
 **JWT_SECRET:**
+
 - Tạo mới hoặc dùng lại từ `.env` cũ
 
 ## Bước 5: Deploy!
 
 Railway sẽ tự động:
+
 1. ✅ Chạy `npm install`
 2. ✅ Chạy `npm run build` (compile TypeScript)
 3. ✅ Chạy `npm run start:prod` (start server)
@@ -90,6 +95,7 @@ Railway sẽ tự động:
 ## 🎉 XONG!
 
 API của bạn giờ đã:
+
 - ✅ Online 24/7
 - ✅ Có URL cố định
 - ✅ Tự động restart nếu crash
@@ -122,6 +128,7 @@ curl -X POST https://your-app-name.up.railway.app/api/auth/login \
 ## 🔧 Troubleshooting
 
 ### Lỗi: Build failed
+
 ```powershell
 # Chạy local để test build:
 npm run build
@@ -129,10 +136,12 @@ npm run start:prod
 ```
 
 ### Lỗi: Database connection
+
 - Kiểm tra DATABASE_URL đã set đúng chưa
 - Đảm bảo Neon database đang online
 
 ### Lỗi: Port already in use
+
 - Railway tự động set PORT env variable
 - Server đang dùng `process.env.PORT || 3000` (đã OK)
 
@@ -141,9 +150,10 @@ npm run start:prod
 ## 📱 Update Postman Collection
 
 Sau khi có Railway URL, update file Postman:
+
 1. Mở `BESWP_API.postman_collection.json`
 2. Find & Replace:
-   - `https://acred-steamy-gilberte.ngrok-free.dev` 
+   - `https://acred-steamy-gilberte.ngrok-free.dev`
    - → `https://your-app-name.up.railway.app`
 
 ---
@@ -151,6 +161,7 @@ Sau khi có Railway URL, update file Postman:
 ## 🔄 Auto-Deploy (GitHub)
 
 Nếu deploy từ GitHub:
+
 - Mỗi lần push code lên GitHub
 - Railway tự động build và deploy lại
 - Không cần làm gì thêm!

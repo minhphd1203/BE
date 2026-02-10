@@ -3,7 +3,10 @@ import postgres from 'postgres';
 import * as dotenv from 'dotenv';
 import * as schema from './schema';
 
-dotenv.config();
+// Load environment variables (only in development)
+if (process.env.NODE_ENV !== 'production') {
+  dotenv.config();
+}
 
 const connectionString = process.env.DATABASE_URL!;
 
