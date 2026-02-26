@@ -2,7 +2,7 @@
 	"info": {
 		"_postman_id": "beswp-api-collection",
 		"name": "BESWP API",
-		"description": "Bike Exchange System API Collection",
+		"description": "Bike Exchange System API Collection\n\n📦 Bao gồm:\n- 🔐 Authentication (Register, Login)\n- 👨‍💼 Admin APIs (Bikes, Users, Transactions, Reports, Categories)\n- 🔍 Inspector APIs (Dashboard, Inspections, Bike Quality Control)\n\nBase URL: http://localhost:3000",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"item": [
@@ -721,11 +721,491 @@
 					"response": []
 				}
 			]
+		},
+		{
+			"name": "Inspector APIs",
+			"item": [
+				{
+					"name": "Login Inspector",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.data && jsonData.data.token) {",
+									"    pm.collectionVariables.set('inspectorToken', jsonData.data.token);",
+									"    pm.collectionVariables.set('inspectorId', jsonData.data.user.id);",
+									"    console.log('✅ Inspector logged in');",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"inspector1@beswp.com\",\n  \"password\": \"Test@123\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/auth/login",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "3000",
+							"path": [
+								"api",
+								"auth",
+								"login"
+							]
+						},
+						"description": "Login với tài khoản inspector"
+					},
+					"response": []
+				},
+				{
+					"name": "Dashboard",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{inspectorToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/inspector/v1/dashboard",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "3000",
+							"path": [
+								"api",
+								"inspector",
+								"v1",
+								"dashboard"
+							]
+						},
+						"description": "Lấy thống kê tổng quan: xe chờ kiểm định, đã kiểm định, đạt, không đạt"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Pending Bikes",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.success && jsonData.data && jsonData.data.length > 0) {",
+									"    pm.collectionVariables.set('pendingBikeId', jsonData.data[0].id);",
+									"    console.log('Saved bike ID:', jsonData.data[0].id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{inspectorToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/inspector/v1/bikes/pending?search=&sort=newest",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "3000",
+							"path": [
+								"api",
+								"inspector",
+								"v1",
+								"bikes",
+								"pending"
+							],
+							"query": [
+								{
+									"key": "search",
+									"value": "",
+									"description": "Tìm kiếm theo title, brand, model, seller"
+								},
+								{
+									"key": "sort",
+									"value": "newest",
+									"description": "newest | oldest | price_asc | price_desc"
+								}
+							]
+						},
+						"description": "Danh sách xe chờ kiểm định với search & filter"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Bike Detail",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{inspectorToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/inspector/v1/bikes/{{pendingBikeId}}",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "3000",
+							"path": [
+								"api",
+								"inspector",
+								"v1",
+								"bikes",
+								"{{pendingBikeId}}"
+							]
+						},
+						"description": "Chi tiết xe để kiểm định, bao gồm thông tin seller và lịch sử kiểm định"
+					},
+					"response": []
+				},
+				{
+					"name": "Start Inspection",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{inspectorToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/inspector/v1/bikes/{{pendingBikeId}}/start",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "3000",
+							"path": [
+								"api",
+								"inspector",
+								"v1",
+								"bikes",
+								"{{pendingBikeId}}",
+								"start"
+							]
+						},
+						"description": "Bắt đầu kiểm định (chuyển status sang in_progress)"
+					},
+					"response": []
+				},
+				{
+					"name": "Submit Inspection - PASSED",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.success && jsonData.data) {",
+									"    pm.collectionVariables.set('lastInspectionId', jsonData.data.id);",
+									"    console.log('Inspection ID:', jsonData.data.id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{inspectorToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"status\": \"passed\",\n  \"overallCondition\": \"good\",\n  \"frameCondition\": \"excellent\",\n  \"brakeCondition\": \"good\",\n  \"drivetrainCondition\": \"fair\",\n  \"wheelCondition\": \"good\",\n  \"inspectionNote\": \"Xe trong tình trạng tốt, phanh hoạt động bình thường, truyền động cần bảo dưỡng nhẹ.\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/inspector/v1/bikes/{{pendingBikeId}}/inspect",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "3000",
+							"path": [
+								"api",
+								"inspector",
+								"v1",
+								"bikes",
+								"{{pendingBikeId}}",
+								"inspect"
+							]
+						},
+						"description": "Submit kiểm định với kết quả ĐẠT"
+					},
+					"response": []
+				},
+				{
+					"name": "Submit Inspection - FAILED",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.success && jsonData.data) {",
+									"    pm.collectionVariables.set('lastInspectionId', jsonData.data.id);",
+									"    console.log('Inspection ID:', jsonData.data.id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{inspectorToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"status\": \"failed\",\n  \"overallCondition\": \"poor\",\n  \"frameCondition\": \"fair\",\n  \"brakeCondition\": \"poor\",\n  \"drivetrainCondition\": \"poor\",\n  \"wheelCondition\": \"fair\",\n  \"inspectionNote\": \"Xe có nhiều vấn đề: phanh yếu, truyền động mòn, khung có vết nứt nhỏ.\",\n  \"recommendation\": \"Cần thay thế phanh và hệ thống truyền động. Không nên sử dụng cho đến khi sửa chữa.\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/inspector/v1/bikes/{{pendingBikeId}}/inspect",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "3000",
+							"path": [
+								"api",
+								"inspector",
+								"v1",
+								"bikes",
+								"{{pendingBikeId}}",
+								"inspect"
+							]
+						},
+						"description": "Submit kiểm định với kết quả KHÔNG ĐẠT"
+					},
+					"response": []
+				},
+				{
+					"name": "Get My Inspections",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{inspectorToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/inspector/v1/inspections?search=&status=&sort=newest",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "3000",
+							"path": [
+								"api",
+								"inspector",
+								"v1",
+								"inspections"
+							],
+							"query": [
+								{
+									"key": "search",
+									"value": "",
+									"description": "Tìm theo title, brand, seller"
+								},
+								{
+									"key": "status",
+									"value": "",
+									"description": "passed | failed"
+								},
+								{
+									"key": "sort",
+									"value": "newest",
+									"description": "newest | oldest | price_asc | price_desc"
+								}
+							]
+						},
+						"description": "Lịch sử kiểm định của inspector với search & filter"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Inspection Detail",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{inspectorToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/inspector/v1/inspections/{{lastInspectionId}}",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "3000",
+							"path": [
+								"api",
+								"inspector",
+								"v1",
+								"inspections",
+								"{{lastInspectionId}}"
+							]
+						},
+						"description": "Chi tiết báo cáo kiểm định"
+					},
+					"response": []
+				},
+				{
+					"name": "Update Inspection",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{inspectorToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"inspectionNote\": \"Updated: Đã kiểm tra lại lần 2, xác nhận xe vẫn trong tình trạng tốt.\",\n  \"recommendation\": \"Nên bảo dưỡng định kỳ mỗi 6 tháng.\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/inspector/v1/inspections/{{lastInspectionId}}",
+							"protocol": "http",
+							"host": [
+								"localhost"
+							],
+							"port": "3000",
+							"path": [
+								"api",
+								"inspector",
+								"v1",
+								"inspections",
+								"{{lastInspectionId}}"
+							]
+						},
+						"description": "Cập nhật báo cáo kiểm định (nếu cần sửa)"
+					},
+					"response": []
+				}
+			]
 		}
 	],
 	"variable": [
 		{
 			"key": "token",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "inspectorToken",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "inspectorId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "pendingBikeId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "lastInspectionId",
 			"value": "",
 			"type": "string"
 		}

@@ -38,6 +38,8 @@ export const bikes = pgTable('bikes', {
   color: varchar('color', { length: 50 }),
   images: text('images').array().notNull().default([]),
   status: varchar('status', { length: 50 }).notNull().default('pending'), // pending, approved, rejected
+  isVerified: varchar('is_verified', { length: 20 }).default('not_verified'), // not_verified, verified, failed
+  inspectionStatus: varchar('inspection_status', { length: 50 }).default('pending'), // pending, in_progress, completed
   categoryId: uuid('category_id').references(() => categories.id),
   sellerId: uuid('seller_id').notNull().references(() => users.id),
   createdAt: timestamp('created_at').notNull().defaultNow(),
@@ -54,6 +56,25 @@ export const transactions = pgTable('transactions', {
   status: varchar('status', { length: 50 }).notNull().default('pending'), // pending, completed, cancelled
   paymentMethod: varchar('payment_method', { length: 50 }),
   notes: text('notes'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
+});
+
+// Inspection table
+export const inspections = pgTable('inspections', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  bikeId: uuid('bike_id').notNull().references(() => bikes.id),
+  inspectorId: uuid('inspector_id').notNull().references(() => users.id),
+  status: varchar('status', { length: 50 }).notNull().default('passed'), // passed, failed
+  overallCondition: varchar('overall_condition', { length: 50 }).notNull(), // excellent, good, fair, poor
+  frameCondition: varchar('frame_condition', { length: 50 }),
+  brakeCondition: varchar('brake_condition', { length: 50 }),
+  drivetrainCondition: varchar('drivetrain_condition', { length: 50 }),
+  wheelCondition: varchar('wheel_condition', { length: 50 }),
+  inspectionNote: text('inspection_note'),
+  recommendation: text('recommendation'),
+  inspectionImages: text('inspection_images').array().default([]),
+  reportFile: text('report_file'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
 });
@@ -81,6 +102,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   soldTransactions: many(transactions, { relationName: 'seller' }),
   submittedReports: many(reports, { relationName: 'reporter' }),
   receivedReports: many(reports, { relationName: 'reportedUser' }),
+  inspections: many(inspections),
 }));
 
 export const categoriesRelations = relations(categories, ({ many }) => ({
@@ -98,6 +120,7 @@ export const bikesRelations = relations(bikes, ({ one, many }) => ({
   }),
   transactions: many(transactions),
   reports: many(reports),
+  inspections: many(inspections),
 }));
 
 export const transactionsRelations = relations(transactions, ({ one }) => ({
@@ -138,6 +161,17 @@ export const reportsRelations = relations(reports, ({ one }) => ({
   }),
 }));
 
+export const inspectionsRelations = relations(inspections, ({ one }) => ({
+  bike: one(bikes, {
+    fields: [inspections.bikeId],
+    references: [bikes.id],
+  }),
+  inspector: one(users, {
+    fields: [inspections.inspectorId],
+    references: [users.id],
+  }),
+}));
+
 // Types
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
@@ -153,3 +187,6 @@ export type NewTransaction = typeof transactions.$inferInsert;
 
 export type Report = typeof reports.$inferSelect;
 export type NewReport = typeof reports.$inferInsert;
+
+export type Inspection = typeof inspections.$inferSelect;
+export type NewInspection = typeof inspections.$inferInsert;

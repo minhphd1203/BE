@@ -1,0 +1,1061 @@
+{
+	"info": {
+		"_postman_id": "beswp-seed-collection",
+		"name": "BESWP - Seed Random Data",
+		"description": "Collection để tạo dữ liệu ngẫu nhiên cho hệ thống BESWP.\n\n📦 Bao gồm:\n- 🎲 Generate Users/Inspectors/Categories/Bikes\n- 🔧 Setup & Login\n\nMỗi request tự động generate data random.\n\n💡 Để test Inspector APIs, sử dụng file BESWP_API.postman_collection.json",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "🎲 Generate Users",
+			"item": [
+				{
+					"name": "Create Random User",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"exec": [
+									"// Random Vietnamese names",
+									"const firstNames = ['Nguyễn', 'Trần', 'Lê', 'Phạm', 'Hoàng', 'Huỳnh', 'Phan', 'Vũ', 'Võ', 'Đặng'];",
+									"const middleNames = ['Văn', 'Thị', 'Đức', 'Minh', 'Hữu', 'Thanh', 'Quang', 'Hoàng'];",
+									"const lastNames = ['An', 'Bình', 'Cường', 'Dũng', 'Đạt', 'Giang', 'Hải', 'Khang', 'Long', 'Mai'];",
+									"",
+									"const randomPick = (arr) => arr[Math.floor(Math.random() * arr.length)];",
+									"const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;",
+									"",
+									"const fullName = `${randomPick(firstNames)} ${randomPick(middleNames)} ${randomPick(lastNames)}`;",
+									"const email = fullName.toLowerCase()",
+									"    .normalize('NFD')",
+									"    .replace(/[\\u0300-\\u036f]/g, '')",
+									"    .replace(/đ/g, 'd')",
+									"    .replace(/\\s+/g, '.') + randomInt(100, 999) + '@example.com';",
+									"",
+									"const phone = '09' + randomInt(10000000, 99999999);",
+									"",
+									"pm.variables.set('randomName', fullName);",
+									"pm.variables.set('randomEmail', email);",
+									"pm.variables.set('randomPhone', phone);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{randomEmail}}\",\n  \"password\": \"Test@123\",\n  \"name\": \"{{randomName}}\",\n  \"phone\": \"{{randomPhone}}\",\n  \"role\": \"user\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/auth/register",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "auth", "register"]
+						},
+						"description": "Tạo 1 user ngẫu nhiên. Chạy nhiều lần để tạo nhiều users."
+					},
+					"response": []
+				},
+				{
+					"name": "Create Random Inspector",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"exec": [
+									"const firstNames = ['Nguyễn', 'Trần', 'Lê', 'Phạm', 'Hoàng'];",
+									"const lastNames = ['An', 'Bình', 'Cường', 'Dũng', 'Minh'];",
+									"const randomPick = (arr) => arr[Math.floor(Math.random() * arr.length)];",
+									"const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;",
+									"",
+									"const fullName = `Inspector ${randomPick(firstNames)} ${randomPick(lastNames)}`;",
+									"const timestamp = Date.now();",
+									"const email = `inspector${timestamp}@beswp.com`;",
+									"const phone = '09' + randomInt(10000000, 99999999);",
+									"",
+									"pm.variables.set('inspectorName', fullName);",
+									"pm.variables.set('inspectorEmail', email);",
+									"pm.variables.set('inspectorPhone', phone);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{inspectorEmail}}\",\n  \"password\": \"Test@123\",\n  \"name\": \"{{inspectorName}}\",\n  \"phone\": \"{{inspectorPhone}}\",\n  \"role\": \"inspector\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/auth/register",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "auth", "register"]
+						},
+						"description": "Tạo 1 inspector ngẫu nhiên."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "🎲 Generate Categories",
+			"item": [
+				{
+					"name": "Create Random Category",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"exec": [
+									"const categories = [",
+									"  { name: 'Road Bike', desc: 'Xe đạp đường trường, tốc độ cao' },",
+									"  { name: 'Mountain Bike', desc: 'Xe đạp địa hình, phù hợp đường núi' },",
+									"  { name: 'Hybrid Bike', desc: 'Xe đạp đa năng' },",
+									"  { name: 'City Bike', desc: 'Xe đạp đô thị' },",
+									"  { name: 'Electric Bike', desc: 'Xe đạp điện trợ lực' },",
+									"  { name: 'Gravel Bike', desc: 'Xe đạp địa hình nhẹ' },",
+									"  { name: 'BMX', desc: 'Xe đạp biểu diễn' },",
+									"  { name: 'Folding Bike', desc: 'Xe đạp gấp' },",
+									"  { name: 'Touring Bike', desc: 'Xe đạp du lịch đường dài' },",
+									"  { name: 'Cyclocross', desc: 'Xe đạp đua địa hình' }",
+									"];",
+									"",
+									"const randomPick = (arr) => arr[Math.floor(Math.random() * arr.length)];",
+									"const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;",
+									"",
+									"const cat = randomPick(categories);",
+									"const name = cat.name + ' ' + randomInt(2024, 2026);",
+									"const slug = name.toLowerCase().replace(/\\s+/g, '-');",
+									"",
+									"pm.variables.set('catName', name);",
+									"pm.variables.set('catSlug', slug);",
+									"pm.variables.set('catDesc', cat.desc);"
+								],
+								"type": "text/javascript"
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.success && jsonData.data) {",
+									"    pm.collectionVariables.set('lastCategoryId', jsonData.data.id);",
+									"    console.log('Created category ID:', jsonData.data.id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"{{catName}}\",\n  \"slug\": \"{{catSlug}}\",\n  \"description\": \"{{catDesc}}\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/admin/v1/category",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "admin", "v1", "category"]
+						},
+						"description": "Tạo category ngẫu nhiên. Cần login Admin trước!"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "🎲 Generate Bikes",
+			"item": [
+				{
+					"name": "Create Random Bike (User)",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"exec": [
+									"// Random bike data",
+									"const brands = ['Giant', 'Trek', 'Specialized', 'Cannondale', 'Merida', 'Scott', 'Bianchi', 'Colnago', 'BMC', 'Cube'];",
+									"const prefixes = ['Pro', 'Elite', 'Sport', 'Advanced', 'Comp', 'Expert', 'Team', 'SL', 'Ultimate'];",
+									"const suffixes = ['X', 'XT', 'Pro', 'Disc', 'Carbon', 'Alloy', 'Race'];",
+									"const colors = ['Đen', 'Trắng', 'Đỏ', 'Xanh dương', 'Xanh lá', 'Vàng', 'Cam', 'Xám', 'Đen/Trắng', 'Đỏ/Đen'];",
+									"const conditions = ['excellent', 'good', 'fair', 'poor'];",
+									"const cities = ['Hà Nội', 'TP. Hồ Chí Minh', 'Đà Nẵng', 'Hải Phòng', 'Cần Thơ', 'Nha Trang'];",
+									"const sizes = ['XS', 'S', 'M', 'L', 'XL'];",
+									"",
+									"const randomPick = (arr) => arr[Math.floor(Math.random() * arr.length)];",
+									"const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;",
+									"",
+									"const brand = randomPick(brands);",
+									"const model = `${randomPick(prefixes)} ${randomInt(100, 999)} ${randomPick(suffixes)}`;",
+									"const year = randomInt(2018, 2024);",
+									"const condition = randomPick(conditions);",
+									"const price = randomInt(5, 100) * 1000000;",
+									"const mileage = condition === 'excellent' ? 0 : randomInt(100, 10000);",
+									"",
+									"const title = `${brand} ${model} ${year}`;",
+									"const description = `Xe ${brand} ${model} tình trạng ${condition}. Địa điểm: ${randomPick(cities)}. Size: ${randomPick(sizes)}. ` +",
+									"    (randomInt(1, 2) === 1 ? 'Có hóa đơn VAT.' : 'Xe cá nhân.') + ` Đã đi ${mileage}km.`;",
+									"",
+									"pm.variables.set('bikeTitle', title);",
+									"pm.variables.set('bikeDesc', description);",
+									"pm.variables.set('bikeBrand', brand);",
+									"pm.variables.set('bikeModel', model);",
+									"pm.variables.set('bikeYear', year);",
+									"pm.variables.set('bikePrice', price);",
+									"pm.variables.set('bikeCondition', condition);",
+									"pm.variables.set('bikeColor', randomPick(colors));",
+									"pm.variables.set('bikeMileage', mileage);",
+									"",
+									"// Random image",
+									"pm.variables.set('bikeImage', `https://picsum.photos/800/600?random=${Date.now()}`);"
+								],
+								"type": "text/javascript"
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.success && jsonData.data) {",
+									"    console.log('✅ Created bike:', jsonData.data.title);",
+									"    console.log('   Price:', jsonData.data.price, 'VND');",
+									"    console.log('   Status:', jsonData.data.status);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{userToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"title\": \"{{bikeTitle}}\",\n  \"description\": \"{{bikeDesc}}\",\n  \"brand\": \"{{bikeBrand}}\",\n  \"model\": \"{{bikeModel}}\",\n  \"year\": {{bikeYear}},\n  \"price\": {{bikePrice}},\n  \"condition\": \"{{bikeCondition}}\",\n  \"color\": \"{{bikeColor}}\",\n  \"mileage\": {{bikeMileage}},\n  \"images\": [\"{{bikeImage}}\"],\n  \"categoryId\": \"{{lastCategoryId}}\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/user/v1/bike",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "user", "v1", "bike"]
+						},
+						"description": "Tạo bike ngẫu nhiên. Cần login User trước và có category!"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "� Inspector APIs",
+			"item": [
+				{
+					"name": "1. Login Inspector",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.data && jsonData.data.token) {",
+									"    pm.collectionVariables.set('inspectorToken', jsonData.data.token);",
+									"    pm.collectionVariables.set('inspectorId', jsonData.data.user.id);",
+									"    console.log('✅ Inspector logged in. Token saved!');",
+									"    console.log('   Inspector:', jsonData.data.user.name);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"inspector@beswp.com\",\n  \"password\": \"Test@123\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/auth/login",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "auth", "login"]
+						},
+						"description": "Login inspector để lấy token cho các API calls tiếp theo"
+					},
+					"response": []
+				},
+				{
+					"name": "2. Get Dashboard",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.success && jsonData.data) {",
+									"    console.log('📊 Dashboard Statistics:');",
+									"    console.log('   Đang chờ kiểm định:', jsonData.data.pendingInspections);",
+									"    console.log('   Đã kiểm định:', jsonData.data.completedInspections);",
+									"    console.log('   Xe đạt:', jsonData.data.passedCount);",
+									"    console.log('   Xe không đạt:', jsonData.data.failedCount);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{inspectorToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/inspector/v1/dashboard",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "inspector", "v1", "dashboard"]
+						},
+						"description": "Lấy thống kê dashboard của inspector"
+					},
+					"response": []
+				},
+				{
+					"name": "3. Get Pending Bikes",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.success && jsonData.data && jsonData.data.length > 0) {",
+									"    pm.collectionVariables.set('pendingBikeId', jsonData.data[0].id);",
+									"    console.log('✅ Found', jsonData.data.length, 'bikes pending inspection');",
+									"    console.log('   First bike:', jsonData.data[0].title);",
+									"    console.log('   Bike ID saved:', jsonData.data[0].id);",
+									"} else {",
+									"    console.log('⚠️ No bikes pending inspection');",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{inspectorToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/inspector/v1/bikes/pending",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "inspector", "v1", "bikes", "pending"],
+							"query": [
+								{
+									"key": "search",
+									"value": "Giant",
+									"disabled": true
+								},
+								{
+									"key": "sort",
+									"value": "newest",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Lấy danh sách xe chờ kiểm định. Có thể filter bằng search và sort."
+					},
+					"response": []
+				},
+				{
+					"name": "4. Get Bike Detail",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.success && jsonData.data) {",
+									"    console.log('🚲 Bike Details:');",
+									"    console.log('   Title:', jsonData.data.bike.title);",
+									"    console.log('   Price:', jsonData.data.bike.price);",
+									"    console.log('   Seller:', jsonData.data.bike.sellerName);",
+									"    console.log('   Status:', jsonData.data.bike.inspectionStatus);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{inspectorToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/inspector/v1/bikes/{{pendingBikeId}}",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "inspector", "v1", "bikes", "{{pendingBikeId}}"]
+						},
+						"description": "Xem chi tiết 1 xe để chuẩn bị kiểm định"
+					},
+					"response": []
+				},
+				{
+					"name": "5. Start Inspection",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.success && jsonData.data) {",
+									"    console.log('▶️ Inspection started for bike:', jsonData.data.title);",
+									"    console.log('   Status changed to:', jsonData.data.inspectionStatus);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{inspectorToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/inspector/v1/bikes/{{pendingBikeId}}/start",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "inspector", "v1", "bikes", "{{pendingBikeId}}", "start"]
+						},
+						"description": "Bắt đầu kiểm định (chuyển status sang in_progress)"
+					},
+					"response": []
+				},
+				{
+					"name": "6. Submit Inspection - PASSED",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.success && jsonData.data) {",
+									"    pm.collectionVariables.set('lastInspectionId', jsonData.data.id);",
+									"    console.log('✅ Inspection submitted successfully!');",
+									"    console.log('   Status:', jsonData.data.status);",
+									"    console.log('   Overall condition:', jsonData.data.overallCondition);",
+									"    console.log('   Inspection ID:', jsonData.data.id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{inspectorToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"status\": \"passed\",\n  \"overallCondition\": \"good\",\n  \"frameCondition\": \"excellent\",\n  \"brakeCondition\": \"good\",\n  \"drivetrainCondition\": \"fair\",\n  \"wheelCondition\": \"good\",\n  \"inspectionNote\": \"Xe trong tình trạng tốt, các bộ phận hoạt động bình thường. Phanh đã được kiểm tra kỹ lưỡng.\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/inspector/v1/bikes/{{pendingBikeId}}/inspect",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "inspector", "v1", "bikes", "{{pendingBikeId}}", "inspect"]
+						},
+						"description": "Submit form kiểm định với kết quả PASSED (đạt)"
+					},
+					"response": []
+				},
+				{
+					"name": "6b. Submit Inspection - FAILED",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.success && jsonData.data) {",
+									"    pm.collectionVariables.set('lastInspectionId', jsonData.data.id);",
+									"    console.log('❌ Inspection submitted - FAILED');",
+									"    console.log('   Status:', jsonData.data.status);",
+									"    console.log('   Overall condition:', jsonData.data.overallCondition);",
+									"    console.log('   Note:', jsonData.data.inspectionNote);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{inspectorToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"status\": \"failed\",\n  \"overallCondition\": \"poor\",\n  \"frameCondition\": \"fair\",\n  \"brakeCondition\": \"poor\",\n  \"drivetrainCondition\": \"poor\",\n  \"wheelCondition\": \"fair\",\n  \"inspectionNote\": \"Xe có nhiều vấn đề cần khắc phục. Phanh yếu, truyền động bị mòn. Không đạt tiêu chuẩn an toàn.\",\n  \"recommendation\": \"Cần thay thế phanh và hệ thống truyền động trước khi sử dụng.\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/inspector/v1/bikes/{{pendingBikeId}}/inspect",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "inspector", "v1", "bikes", "{{pendingBikeId}}", "inspect"]
+						},
+						"description": "Submit form kiểm định với kết quả FAILED (không đạt)"
+					},
+					"response": []
+				},
+				{
+					"name": "7. Get My Inspections",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.success && jsonData.data) {",
+									"    console.log('📋 Found', jsonData.data.length, 'inspections');",
+									"    jsonData.data.forEach((item, index) => {",
+									"        console.log(`   ${index + 1}. ${item.bikeTitle} - ${item.inspection.status}`);",
+									"    });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{inspectorToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/inspector/v1/inspections",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "inspector", "v1", "inspections"],
+							"query": [
+								{
+									"key": "search",
+									"value": "Trek",
+									"disabled": true
+								},
+								{
+									"key": "status",
+									"value": "passed",
+									"disabled": true
+								},
+								{
+									"key": "sort",
+									"value": "newest",
+									"disabled": true
+								}
+							]
+						},
+						"description": "Lấy lịch sử kiểm định của inspector. Có thể filter theo search, status, sort."
+					},
+					"response": []
+				},
+				{
+					"name": "8. Get Inspection Detail",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.success && jsonData.data) {",
+									"    console.log('🔍 Inspection Detail:');",
+									"    console.log('   Bike:', jsonData.data.bike.title);",
+									"    console.log('   Status:', jsonData.data.inspection.status);",
+									"    console.log('   Overall:', jsonData.data.inspection.overallCondition);",
+									"    console.log('   Note:', jsonData.data.inspection.inspectionNote);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{inspectorToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/inspector/v1/inspections/{{lastInspectionId}}",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "inspector", "v1", "inspections", "{{lastInspectionId}}"]
+						},
+						"description": "Xem chi tiết 1 báo cáo kiểm định"
+					},
+					"response": []
+				},
+				{
+					"name": "9. Update Inspection",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.success && jsonData.data) {",
+									"    console.log('✏️ Inspection updated successfully!');",
+									"    console.log('   Updated status:', jsonData.data.status);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{inspectorToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"inspectionNote\": \"Updated: Đã kiểm tra lại lần 2, xe vẫn trong tình trạng tốt.\",\n  \"recommendation\": \"Nên bảo dưỡng định kỳ mỗi 6 tháng.\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/inspector/v1/inspections/{{lastInspectionId}}",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "inspector", "v1", "inspections", "{{lastInspectionId}}"]
+						},
+						"description": "Cập nhật lại báo cáo kiểm định (nếu cần sửa)"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "�🔧 Setup & Login",
+			"item": [
+				{
+					"name": "1. Register Admin",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"admin@beswp.com\",\n  \"password\": \"Admin@123\",\n  \"name\": \"Admin BESWP\",\n  \"phone\": \"0900000000\",\n  \"role\": \"admin\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/auth/register",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "auth", "register"]
+						},
+						"description": "Chạy 1 lần để tạo admin account"
+					},
+					"response": []
+				},
+				{
+					"name": "2. Login Admin",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.data && jsonData.data.token) {",
+									"    pm.collectionVariables.set('adminToken', jsonData.data.token);",
+									"    console.log('✅ Admin logged in. Token saved!');",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"admin@beswp.com\",\n  \"password\": \"Admin@123\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/auth/login",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "auth", "login"]
+						},
+						"description": "Login admin để lấy token"
+					},
+					"response": []
+				},
+				{
+					"name": "3. Create Test User",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.success && jsonData.data) {",
+									"    console.log('✅ Test user created');",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"testuser@beswp.com\",\n  \"password\": \"Test@123\",\n  \"name\": \"Test User BESWP\",\n  \"phone\": \"0911111111\",\n  \"role\": \"user\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/auth/register",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "auth", "register"]
+						},
+						"description": "Tạo 1 test user để đăng bikes"
+					},
+					"response": []
+				},
+				{
+					"name": "4. Login Test User",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.data && jsonData.data.token) {",
+									"    pm.collectionVariables.set('userToken', jsonData.data.token);",
+									"    console.log('✅ User logged in. Token saved!');",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"testuser@beswp.com\",\n  \"password\": \"Test@123\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/auth/login",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "auth", "login"]
+						},
+						"description": "Login user để lấy token"
+					},
+					"response": []
+				},
+				{
+					"name": "5. Create Test Inspector",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.success && jsonData.data) {",
+									"    console.log('✅ Test inspector created');",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"inspector@beswp.com\",\n  \"password\": \"Test@123\",\n  \"name\": \"Kiểm Duyệt Viên BESWP\",\n  \"phone\": \"0922222222\",\n  \"role\": \"inspector\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/auth/register",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "auth", "register"]
+						},
+						"description": "Tạo 1 test inspector account"
+					},
+					"response": []
+				},
+				{
+					"name": "6. Login Test Inspector",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.data && jsonData.data.token) {",
+									"    pm.collectionVariables.set('inspectorToken', jsonData.data.token);",
+									"    console.log('✅ Inspector logged in. Token saved!');",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"inspector@beswp.com\",\n  \"password\": \"Test@123\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/auth/login",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "auth", "login"]
+						},
+						"description": "Login inspector để lấy token"
+					},
+					"response": []
+				}
+			]
+		}
+	],
+	"variable": [
+		{
+			"key": "adminToken",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "userToken",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "inspectorToken",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "inspectorId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "pendingBikeId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "lastInspectionId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "lastCategoryId",
+			"value": "",
+			"type": "string"
+		}
+	]
+}
