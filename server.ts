@@ -1,9 +1,11 @@
 import express from 'express';
 import dotenv from 'dotenv';
+import swaggerUi from 'swagger-ui-express';
 import authRoutes from './src/routes/authRoutes';
 import adminRoutes from './src/routes/adminRoutes';
 import inspectorRoutes from './src/routes/inspectorRoutes';
 import buyerRoutes from './src/routes/buyerRoutes';
+import { specs } from './src/swagger';
 
 // Load environment variables
 dotenv.config();
@@ -83,6 +85,9 @@ app.get('/api/health', (req, res) => {
         uptime: process.uptime()
     });
 });
+
+// Swagger UI Documentation
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs));
 
 // Routes
 app.use('/api/auth', authRoutes);
