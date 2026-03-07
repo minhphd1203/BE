@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import authRoutes from './src/routes/authRoutes';
 import adminRoutes from './src/routes/adminRoutes';
 import inspectorRoutes from './src/routes/inspectorRoutes';
+import buyerRoutes from './src/routes/buyerRoutes';
 
 // Load environment variables
 dotenv.config();
@@ -59,6 +60,11 @@ app.get('/', (req, res) => {
                 inspectionDetail: 'GET /api/inspector/v1/inspections/:inspectionId',
                 updateInspection: 'PUT /api/inspector/v1/inspections/:inspectionId'
             },
+            buyer: {
+                searchBikes: 'GET /api/buyer/v1/bikes/search?brand=&model=&minPrice=&maxPrice=&condition=&page=&limit=',
+                bikeDetail: 'GET /api/buyer/v1/bikes/:bikeId',
+                recommendedBikes: 'GET /api/buyer/v1/bikes/recommended?limit='
+            },
             other: {
                 health: 'GET /api/health'
             }
@@ -82,6 +88,7 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/inspector', inspectorRoutes);
+app.use('/api/buyer', buyerRoutes);
 
 app.listen(port, () => {
     console.log(`Server is running at http://localhost:${port}`);

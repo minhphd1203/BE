@@ -1,0 +1,370 @@
+{
+  "info": {
+    "_postman_id": "buyer-api-flow-collection",
+    "name": "Buyer API Flow - Full Testing",
+    "description": "Complete buyer API test flow: Register → Login → Browse → Search → Details",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Register as Buyer",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"buyer.test@example.com\",\n  \"password\": \"buyer123\",\n  \"name\": \"Test Buyer\",\n  \"phone\": \"0987654321\"\n}"
+        },
+        "url": {
+          "raw": "{{BASE_URL}}/api/auth/register",
+          "host": ["{{BASE_URL}}"],
+          "path": ["api", "auth", "register"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.response.code === 200) {",
+              "  pm.environment.set('BUYER_ID', pm.response.json().data.id);",
+              "  pm.test('Buyer registered with role: buyer', function () {",
+              "    pm.expect(pm.response.json().data.role).to.equal('buyer');",
+              "  });",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Login as Buyer",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"buyer.test@example.com\",\n  \"password\": \"buyer123\"\n}"
+        },
+        "url": {
+          "raw": "{{BASE_URL}}/api/auth/login",
+          "host": ["{{BASE_URL}}"],
+          "path": ["api", "auth", "login"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.response.code === 200) {",
+              "  const token = pm.response.json().data.token;",
+              "  pm.environment.set('BUYER_TOKEN', token);",
+              "  pm.test('Token received and set', function () {",
+              "    pm.expect(token).to.be.truthy;",
+              "  });",
+              "  pm.test('Role is buyer', function () {",
+              "    pm.expect(pm.response.json().data.role).to.equal('buyer');",
+              "  });",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Get Recommended Bikes (Homepage)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{BUYER_TOKEN}}"
+          }
+        ],
+        "url": {
+          "raw": "{{BASE_URL}}/api/buyer/v1/bikes/recommended?limit=5",
+          "host": ["{{BASE_URL}}"],
+          "path": ["api", "buyer", "v1", "bikes", "recommended"],
+          "query": [
+            {
+              "key": "limit",
+              "value": "5"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.expect(pm.response.code).to.equal(200);",
+              "});",
+              "",
+              "pm.test('Response contains bikes array', function () {",
+              "  pm.expect(pm.response.json().data).to.be.an('array');",
+              "});",
+              "",
+              "if (pm.response.json().data.length > 0) {",
+              "  pm.environment.set('BIKE_ID', pm.response.json().data[0].id);",
+              "  pm.test('All bikes are verified', function () {",
+              "    pm.response.json().data.forEach(bike => {",
+              "      pm.expect(bike.isVerified).to.equal('verified');",
+              "    });",
+              "  });",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Search Bikes with Filters",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{BUYER_TOKEN}}"
+          }
+        ],
+        "url": {
+          "raw": "{{BASE_URL}}/api/buyer/v1/bikes/search?brand=Giant&minPrice=1000000&maxPrice=30000000&sortBy=price&sortOrder=asc&page=1&limit=10",
+          "host": ["{{BASE_URL}}"],
+          "path": ["api", "buyer", "v1", "bikes", "search"],
+          "query": [
+            {
+              "key": "brand",
+              "value": "Giant"
+            },
+            {
+              "key": "minPrice",
+              "value": "1000000"
+            },
+            {
+              "key": "maxPrice",
+              "value": "30000000"
+            },
+            {
+              "key": "sortBy",
+              "value": "price"
+            },
+            {
+              "key": "sortOrder",
+              "value": "asc"
+            },
+            {
+              "key": "page",
+              "value": "1"
+            },
+            {
+              "key": "limit",
+              "value": "10"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.expect(pm.response.code).to.equal(200);",
+              "});",
+              "",
+              "pm.test('Response contains meta pagination', function () {",
+              "  const response = pm.response.json();",
+              "  pm.expect(response.meta).to.have.property('total');",
+              "  pm.expect(response.meta).to.have.property('page');",
+              "  pm.expect(response.meta).to.have.property('limit');",
+              "  pm.expect(response.meta).to.have.property('totalPages');",
+              "});",
+              "",
+              "if (pm.response.json().data.length > 0) {",
+              "  pm.environment.set('BIKE_ID', pm.response.json().data[0].id);",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Get Bike Details",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{BUYER_TOKEN}}"
+          }
+        ],
+        "url": {
+          "raw": "{{BASE_URL}}/api/buyer/v1/bikes/{{BIKE_ID}}",
+          "host": ["{{BASE_URL}}"],
+          "path": ["api", "buyer", "v1", "bikes", "{{BIKE_ID}}"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "  pm.expect(pm.response.code).to.equal(200);",
+              "});",
+              "",
+              "pm.test('Bike data contains all fields', function () {",
+              "  const bike = pm.response.json().data;",
+              "  pm.expect(bike).to.have.property('id');",
+              "  pm.expect(bike).to.have.property('title');",
+              "  pm.expect(bike).to.have.property('description');",
+              "  pm.expect(bike).to.have.property('price');",
+              "  pm.expect(bike).to.have.property('seller');",
+              "});",
+              "",
+              "pm.test('Seller info includes contact details', function () {",
+              "  const seller = pm.response.json().data.seller;",
+              "  pm.expect(seller).to.have.property('email');",
+              "  pm.expect(seller).to.have.property('phone');",
+              "});",
+              "",
+              "pm.test('Inspection report included', function () {",
+              "  const inspections = pm.response.json().data.inspections;",
+              "  pm.expect(inspections).to.be.an('array');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Error: Invalid Bike ID",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{BUYER_TOKEN}}"
+          }
+        ],
+        "url": {
+          "raw": "{{BASE_URL}}/api/buyer/v1/bikes/invalid-bike-id-12345",
+          "host": ["{{BASE_URL}}"],
+          "path": ["api", "buyer", "v1", "bikes", "invalid-bike-id-12345"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 404', function () {",
+              "  pm.expect(pm.response.code).to.equal(404);",
+              "});",
+              "",
+              "pm.test('Error message returned', function () {",
+              "  pm.expect(pm.response.json().success).to.equal(false);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Error: No Token",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{BASE_URL}}/api/buyer/v1/bikes/recommended",
+          "host": ["{{BASE_URL}}"],
+          "path": ["api", "buyer", "v1", "bikes", "recommended"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 401', function () {",
+              "  pm.expect(pm.response.code).to.equal(401);",
+              "});",
+              "",
+              "pm.test('Error message: No token provided', function () {",
+              "  pm.expect(pm.response.json().message).to.include('No token');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. Error: Invalid Token",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer invalid.token.here"
+          }
+        ],
+        "url": {
+          "raw": "{{BASE_URL}}/api/buyer/v1/bikes/recommended",
+          "host": ["{{BASE_URL}}"],
+          "path": ["api", "buyer", "v1", "bikes", "recommended"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 401', function () {",
+              "  pm.expect(pm.response.code).to.equal(401);",
+              "});",
+              "",
+              "pm.test('Error message: Invalid token', function () {",
+              "  pm.expect(pm.response.json().message).to.include('Invalid');",
+              "});"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "BASE_URL",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "BUYER_TOKEN",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "BUYER_ID",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "BIKE_ID",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

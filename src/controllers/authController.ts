@@ -9,7 +9,7 @@ import { ApiResponse, JwtPayload } from '../models';
 // Đăng ký
 export const register = async (req: Request, res: Response) => {
   try {
-    const { email, password, name, phone, role } = req.body;
+    const { email, password, name, phone } = req.body;
 
     // Kiểm tra email đã tồn tại
     const existingUser = await db.query.users.findFirst({
@@ -34,7 +34,7 @@ export const register = async (req: Request, res: Response) => {
         password: hashedPassword,
         name,
         phone: phone || null,
-        role: role || 'user', // Mặc định là 'user', để tạo admin thì truyền role: 'admin'
+        role: 'buyer', // Luôn là 'buyer' khi đăng ký
       })
       .returning({
         id: users.id,

@@ -7,7 +7,7 @@ import { InspectionResponse, InspectionFormData, InspectorDashboard, BikeWithIns
 // 📊 1. DASHBOARD - Thống kê tổng quan cho Inspector
 export const getDashboard = async (req: Request, res: Response) => {
   try {
-    const inspectorId = req.user?.id;
+    const inspectorId = req.user?.userId;
 
     // Đếm xe chờ kiểm định
     const [pendingResult] = await db
@@ -171,7 +171,7 @@ export const getBikeDetail = async (req: Request, res: Response) => {
       .from(bikes)
       .leftJoin(users, eq(bikes.sellerId, users.id))
       .leftJoin(categories, eq(bikes.categoryId, categories.id))
-      .where(eq(bikes.id, bikeId));
+      .where(eq(bikes.id, bikeId as string));
 
     if (!bikeDetail) {
       return res.status(404).json({
@@ -184,7 +184,7 @@ export const getBikeDetail = async (req: Request, res: Response) => {
     const inspectionHistory = await db
       .select()
       .from(inspections)
-      .where(eq(inspections.bikeId, bikeId))
+      .where(eq(inspections.bikeId, bikeId as string))
       .orderBy(desc(inspections.createdAt));
 
     res.json({
@@ -206,10 +206,10 @@ export const getBikeDetail = async (req: Request, res: Response) => {
 // 🚀 4. BẮT ĐẦU KIỂM ĐỊNH (Cập nhật trạng thái sang "in_progress")
 export const startInspection = async (req: Request, res: Response) => {
   try {
-    const { bikeId } = req.params;
+    const bikeId = req.params.bikeId as string;
 
     // Kiểm tra xe tồn tại
-    const [bike] = await db.select().from(bikes).where(eq(bikes.id, bikeId));
+    const [bike] = await db.select().from(bikes).where(eq(bikes.id, bikeId as string));
 
     if (!bike) {
       return res.status(404).json({
@@ -232,7 +232,7 @@ export const startInspection = async (req: Request, res: Response) => {
         inspectionStatus: 'in_progress',
         updatedAt: new Date(),
       })
-      .where(eq(bikes.id, bikeId))
+      .where(eq(bikes.id, bikeId as string))
       .returning();
 
     res.json({
@@ -252,8 +252,8 @@ export const startInspection = async (req: Request, res: Response) => {
 // ✅ 5. HOÀN TẤT KIỂM ĐỊNH (Submit form kiểm định)
 export const submitInspection = async (req: Request, res: Response) => {
   try {
-    const { bikeId } = req.params;
-    const inspectorId = req.user?.id;
+    const bikeId = req.params.bikeId as string;
+    const inspectorId = req.user?.userId;
     const inspectionData: InspectionFormData = req.body;
 
     // Validate required fields
@@ -265,7 +265,7 @@ export const submitInspection = async (req: Request, res: Response) => {
     }
 
     // Kiểm tra xe tồn tại
-    const [bike] = await db.select().from(bikes).where(eq(bikes.id, bikeId));
+    const [bike] = await db.select().from(bikes).where(eq(bikes.id, bikeId as string));
 
     if (!bike) {
       return res.status(404).json({
@@ -278,7 +278,7 @@ export const submitInspection = async (req: Request, res: Response) => {
     const [newInspection] = await db
       .insert(inspections)
       .values({
-        bikeId,
+        bikeId: bikeId as string,
         inspectorId: inspectorId!,
         status: inspectionData.status,
         overallCondition: inspectionData.overallCondition,
@@ -303,7 +303,7 @@ export const submitInspection = async (req: Request, res: Response) => {
         inspectionStatus: 'completed',
         updatedAt: new Date(),
       })
-      .where(eq(bikes.id, bikeId));
+      .where(eq(bikes.id, bikeId as string));
 
     res.json({
       success: true,
@@ -322,7 +322,7 @@ export const submitInspection = async (req: Request, res: Response) => {
 // 📋 6. LẤY LỊCH SỬ KIỂM ĐỊNH CỦA INSPECTOR
 export const getMyInspections = async (req: Request, res: Response) => {
   try {
-    const inspectorId = req.user?.id;
+    const inspectorId = req.user?.userId;
     const { search, sort, status } = req.query;
 
     let query = db
@@ -392,7 +392,7 @@ export const getMyInspections = async (req: Request, res: Response) => {
 // 📊 7. LẤY CHI TIẾT MỘT BÁO CÁO KIỂM ĐỊNH
 export const getInspectionDetail = async (req: Request, res: Response) => {
   try {
-    const { inspectionId } = req.params;
+    const inspectionId = req.params.inspectionId as string;
 
     const [inspection] = await db
       .select({
@@ -407,7 +407,7 @@ export const getInspectionDetail = async (req: Request, res: Response) => {
       .from(inspections)
       .leftJoin(bikes, eq(inspections.bikeId, bikes.id))
       .leftJoin(users, eq(inspections.inspectorId, users.id))
-      .where(eq(inspections.id, inspectionId));
+      .where(eq(inspections.id, inspectionId as string));
 
     if (!inspection) {
       return res.status(404).json({
@@ -432,15 +432,15 @@ export const getInspectionDetail = async (req: Request, res: Response) => {
 // 🔄 8. CẬP NHẬT BÁO CÁO KIỂM ĐỊNH (Nếu cần sửa)
 export const updateInspection = async (req: Request, res: Response) => {
   try {
-    const { inspectionId } = req.params;
-    const inspectorId = req.user?.id;
+    const inspectionId = req.params.inspectionId as string;
+    const inspectorId = req.user?.userId;
     const updateData: Partial<InspectionFormData> = req.body;
 
     // Kiểm tra inspection tồn tại và thuộc về inspector này
     const [inspection] = await db
       .select()
       .from(inspections)
-      .where(eq(inspections.id, inspectionId));
+      .where(eq(inspections.id, inspectionId as string));
 
     if (!inspection) {
       return res.status(404).json({
@@ -463,7 +463,7 @@ export const updateInspection = async (req: Request, res: Response) => {
         ...updateData,
         updatedAt: new Date(),
       })
-      .where(eq(inspections.id, inspectionId))
+      .where(eq(inspections.id, inspectionId as string))
       .returning();
 
     res.json({

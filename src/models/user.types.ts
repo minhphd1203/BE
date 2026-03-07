@@ -48,4 +48,11 @@ export interface ApiResponse<T = any> {
   message?: string;
   data?: T;
   error?: string;
+  meta?: {
+    total?: number;
+    page?: number;
+    limit?: number;
+    totalPages?: number;
+    [key: string]: any;
+  };
 }
