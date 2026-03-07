@@ -2,27 +2,35 @@ import { Request, Response } from 'express';
 import { db } from '../db';
 import { bikes, inspections, users, categories } from '../db/schema';
 import { eq, desc, and, sql } from 'drizzle-orm';
-import { InspectionResponse, InspectionFormData, InspectorDashboard, BikeWithInspection } from '../models';
+import { InspectionFormData, ApiResponse } from '../models';
 
-// 📊 1. DASHBOARD - Thống kê tổng quan cho Inspector
+// ============= QUẢN LÝ KIỂM ĐỊNH XE ĐẠP =============
+
+// � 0. DASHBOARD - THỐNG KÊ TỔNG QUAN
 export const getDashboard = async (req: Request, res: Response) => {
   try {
     const inspectorId = req.user?.userId;
 
-    // Đếm xe chờ kiểm định
-    const [pendingResult] = await db
+    // Đếm số xe chờ kiểm định (pending)
+    const [pendingCount] = await db
       .select({ count: sql<number>`cast(count(*) as int)` })
       .from(bikes)
       .where(eq(bikes.inspectionStatus, 'pending'));
 
-    // Đếm xe đã kiểm định (của inspector này)
-    const [completedResult] = await db
+    // Đếm số xe đang kiểm định (in_progress)
+    const [inProgressCount] = await db
+      .select({ count: sql<number>`cast(count(*) as int)` })
+      .from(bikes)
+      .where(eq(bikes.inspectionStatus, 'in_progress'));
+
+    // Đếm tổng số lần kiểm định của inspector này
+    const [myInspectionsCount] = await db
       .select({ count: sql<number>`cast(count(*) as int)` })
       .from(inspections)
       .where(eq(inspections.inspectorId, inspectorId!));
 
-    // Đếm xe đạt
-    const [passedResult] = await db
+    // Đếm số xe đã kiểm định PASSED
+    const [passedCount] = await db
       .select({ count: sql<number>`cast(count(*) as int)` })
       .from(inspections)
       .where(
@@ -32,8 +40,8 @@ export const getDashboard = async (req: Request, res: Response) => {
         )
       );
 
-    // Đếm xe không đạt
-    const [failedResult] = await db
+    // Đếm số xe đã kiểm định FAILED
+    const [failedCount] = await db
       .select({ count: sql<number>`cast(count(*) as int)` })
       .from(inspections)
       .where(
@@ -43,28 +51,30 @@ export const getDashboard = async (req: Request, res: Response) => {
         )
       );
 
-    const dashboard: InspectorDashboard = {
-      pendingInspections: pendingResult.count || 0,
-      completedInspections: completedResult.count || 0,
-      passedCount: passedResult.count || 0,
-      failedCount: failedResult.count || 0,
-      disputesCount: 0, // TODO: Implement disputes count
+    const response: ApiResponse = {
+      success: true,
+      data: {
+        pending: pendingCount?.count || 0,
+        inProgress: inProgressCount?.count || 0,
+        completed: myInspectionsCount?.count || 0,
+        passed: passedCount?.count || 0,
+        failed: failedCount?.count || 0,
+      },
+      message: 'Dashboard statistics retrieved successfully',
     };
 
-    res.json({
-      success: true,
-      data: dashboard,
-    });
+    res.json(response);
   } catch (error) {
-    console.error('Get dashboard error:', error);
+    console.error('Error fetching dashboard:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to get dashboard data',
+      message: 'Error fetching dashboard statistics',
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 };
 
-// 🔍 2. LẤY DANH SÁCH XE CHỜ KIỂM ĐỊNH
+// �🔍 1. LẤY DANH SÁCH XE CHỜ KIỂM ĐỊNH
 export const getPendingBikes = async (req: Request, res: Response) => {
   try {
     const { search, sort } = req.query;
@@ -143,7 +153,7 @@ export const getPendingBikes = async (req: Request, res: Response) => {
 // 📄 3. LẤY CHI TIẾT MỘT XE ĐỂ KIỂM ĐỊNH
 export const getBikeDetail = async (req: Request, res: Response) => {
   try {
-    const { bikeId } = req.params;
+    const bikeId = req.params.bikeId as string;
 
     const [bikeDetail] = await db
       .select({
