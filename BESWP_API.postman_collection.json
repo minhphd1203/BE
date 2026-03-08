@@ -10,6 +10,138 @@
 			"name": "Authentication",
 			"item": [
 				{
+					"name": "🔑 Login ADMIN (lưu adminToken)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var json = pm.response.json();",
+									"if (json.data && json.data.token) {",
+									"    pm.collectionVariables.set('adminToken', json.data.token);",
+									"    console.log('✅ adminToken saved');",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"admin@beswp.com\",\n  \"password\": \"admin123\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/auth/login",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "auth", "login"]
+						},
+						"description": "Login admin → tự lưu {{adminToken}}\n\nDùng {{adminToken}} cho tất cả Admin APIs"
+					},
+					"response": []
+				},
+				{
+					"name": "🔑 Login SELLER (lưu token)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var json = pm.response.json();",
+									"if (json.data && json.data.token) {",
+									"    pm.collectionVariables.set('token', json.data.token);",
+									"    console.log('✅ seller token saved');",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"seller1@beswp.com\",\n  \"password\": \"Test@123\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/auth/login",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "auth", "login"]
+						},
+						"description": "Login seller → tự lưu {{token}}"
+					},
+					"response": []
+				},
+				{
+					"name": "🔑 Login BUYER (lưu token)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var json = pm.response.json();",
+									"if (json.data && json.data.token) {",
+									"    pm.collectionVariables.set('token', json.data.token);",
+									"    console.log('✅ buyer token saved');",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"buyer1@beswp.com\",\n  \"password\": \"Test@123\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/auth/login",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "auth", "login"]
+						},
+						"description": "Login buyer → tự lưu {{token}}"
+					},
+					"response": []
+				},
+				{
+					"name": "🔑 Login INSPECTOR (lưu inspectorToken)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var json = pm.response.json();",
+									"if (json.data && json.data.token) {",
+									"    pm.collectionVariables.set('inspectorToken', json.data.token);",
+									"    console.log('✅ inspectorToken saved');",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Content-Type", "value": "application/json" }],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"inspector1@beswp.com\",\n  \"password\": \"Test@123\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/auth/login",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "auth", "login"]
+						},
+						"description": "Login inspector → tự lưu {{inspectorToken}}"
+					},
+					"response": []
+				},
+				{
 					"name": "Register",
 					"request": {
 						"method": "POST",
@@ -120,41 +252,22 @@
 					},
 					"response": []
 				},
-				{
-					"name": "Approve Bike",
-					"request": {
-						"auth": {
-							"type": "bearer",
-							"bearer": [
-								{
-									"key": "token",
-									"value": "{{token}}",
-									"type": "string"
-								}
-							]
-						},
-						"method": "PUT",
-						"header": [],
-						"url": {
-							"raw": "http://localhost:3000/api/admin/v1/bike/:id/approve",
-							"protocol": "http",
-							"host": [
-								"localhost"
-							],
-							"port": "3000",
-							"path": [
-								"api",
-								"admin",
-								"v1",
-								"bike",
-								":id",
-								"approve"
-							],
-							"variable": [
-								{
-									"key": "id",
-									"value": "bike_id_here"
-								}
+			{
+				"name": "Approve Bike",
+				"request": {
+					"method": "PUT",
+					"header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+					"url": {
+						"raw": "http://localhost:3000/api/admin/v1/bike/{{myBikeId}}/approve",
+						"protocol": "http",
+						"host": ["localhost"],
+						"port": "3000",
+						"path": ["api", "admin", "v1", "bike", "{{myBikeId}}", "approve"],
+						"variable": [
+							{
+								"key": "id",
+								"value": "{{myBikeId}}"
+							}
 							]
 						}
 					},
@@ -1182,11 +1295,596 @@
 				}
 			]
 		}
+		,
+		{
+			"name": "🛒 Seller",
+			"description": "Seller APIs - Đăng tin bán xe, quản lý tin đăng, giao dịch, tin nhắn, đánh giá\n\n⚠️ Tất cả API yêu cầu Bearer Token (đăng nhập trước)",
+			"item": [
+				{
+					"name": "Dashboard",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": {
+							"raw": "http://localhost:3000/api/seller/v1/dashboard",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "seller", "v1", "dashboard"]
+						},
+						"description": "Thống kê tổng quan: số tin đăng, giao dịch, doanh thu, điểm uy tín"
+					},
+					"response": []
+				},
+				{
+					"name": "Đăng tin bán xe mới",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var json = pm.response.json();",
+									"if (json.data && json.data.id) {",
+									"    pm.collectionVariables.set('myBikeId', json.data.id);",
+									"    console.log('Bike ID saved:', json.data.id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"title\": \"Trek Domane SL 6 - 2022 - 95% mới\",\n  \"description\": \"Xe đạp đường trường cao cấp, mua năm 2022, ít sử dụng, còn mới 95%. Đầy đủ phụ kiện gốc.\",\n  \"brand\": \"Trek\",\n  \"model\": \"Domane SL 6\",\n  \"year\": 2022,\n  \"price\": 45000000,\n  \"condition\": \"excellent\",\n  \"mileage\": 500,\n  \"color\": \"Đen\",\n  \"images\": [\"https://example.com/bike1.jpg\", \"https://example.com/bike2.jpg\"],\n  \"video\": \"https://youtube.com/watch?v=abc123\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/seller/v1/bikes",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "seller", "v1", "bikes"]
+						},
+						"description": "Đăng tin bán xe mới. Tin sẽ ở trạng thái 'pending' chờ admin duyệt.\n\n✅ Script tự động lưu bikeId vào {{myBikeId}}"
+					},
+					"response": []
+				},
+				{
+					"name": "Danh sách tin đăng của tôi",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": {
+							"raw": "http://localhost:3000/api/seller/v1/bikes?page=1&limit=10",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "seller", "v1", "bikes"],
+							"query": [
+								{ "key": "status", "value": "", "description": "pending | approved | rejected | hidden | sold", "disabled": true },
+								{ "key": "search", "value": "", "disabled": true },
+								{ "key": "sortBy", "value": "createdAt", "description": "price | year | createdAt" },
+								{ "key": "sortOrder", "value": "desc" },
+								{ "key": "page", "value": "1" },
+								{ "key": "limit", "value": "10" }
+							]
+						},
+						"description": "Xem tất cả tin đăng của mình (mọi trạng thái)"
+					},
+					"response": []
+				},
+				{
+					"name": "Chi tiết tin đăng",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": {
+							"raw": "http://localhost:3000/api/seller/v1/bikes/{{myBikeId}}",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "seller", "v1", "bikes", "{{myBikeId}}"]
+						},
+						"description": "Chi tiết tin đăng (bao gồm inspection history và transactions)"
+					},
+					"response": []
+				},
+				{
+					"name": "Cập nhật tin đăng",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"price\": 43000000,\n  \"description\": \"Giảm giá! Xe đạp Trek Domane SL 6 2022, mới 95%, ít sử dụng. Cần bán gấp.\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/seller/v1/bikes/{{myBikeId}}",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "seller", "v1", "bikes", "{{myBikeId}}"]
+						},
+						"description": "Cập nhật tin đăng. Nếu sửa thông tin cốt lõi (title/price/brand...) trên tin đã approved → tự động reset về pending"
+					},
+					"response": []
+				},
+				{
+					"name": "Ẩn / Hiện tin đăng",
+					"request": {
+						"method": "PUT",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": {
+							"raw": "http://localhost:3000/api/seller/v1/bikes/{{myBikeId}}/visibility",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "seller", "v1", "bikes", "{{myBikeId}}", "visibility"]
+						},
+						"description": "Toggle ẩn/hiện tin. Chỉ áp dụng cho tin ở trạng thái 'approved' hoặc 'hidden'"
+					},
+					"response": []
+				},
+				{
+					"name": "Xóa tin đăng",
+					"request": {
+						"method": "DELETE",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": {
+							"raw": "http://localhost:3000/api/seller/v1/bikes/{{myBikeId}}",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "seller", "v1", "bikes", "{{myBikeId}}"]
+						},
+						"description": "Xóa tin đăng. Không thể xóa nếu có giao dịch pending hoặc xe đã bán"
+					},
+					"response": []
+				},
+				{
+					"name": "Danh sách đơn đặt mua nhận được",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": {
+							"raw": "http://localhost:3000/api/seller/v1/transactions?page=1&limit=10",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "seller", "v1", "transactions"],
+							"query": [
+								{ "key": "status", "value": "", "description": "pending | completed | cancelled", "disabled": true },
+								{ "key": "page", "value": "1" },
+								{ "key": "limit", "value": "10" }
+							]
+						},
+						"description": "Xem các đơn đặt mua từ buyer gửi đến"
+					},
+					"response": []
+				},
+				{
+					"name": "Xác nhận / Hủy đơn đặt mua",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"status\": \"completed\",\n  \"notes\": \"Đã giao xe, giao dịch hoàn tất\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/seller/v1/transactions/{{transactionId}}",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "seller", "v1", "transactions", "{{transactionId}}"]
+						},
+						"description": "Seller xác nhận bán (completed) hoặc hủy (cancelled) đơn đặt mua\n\n- completed → xe tự động chuyển sang sold\n- cancelled → giao dịch bị hủy"
+					},
+					"response": []
+				},
+				{
+					"name": "Danh sách cuộc hội thoại",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": {
+							"raw": "http://localhost:3000/api/seller/v1/messages",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "seller", "v1", "messages"]
+						},
+						"description": "Xem danh sách cuộc hội thoại với các buyer"
+					},
+					"response": []
+				},
+				{
+					"name": "Lịch sử tin nhắn với buyer",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": {
+							"raw": "http://localhost:3000/api/seller/v1/messages/{{partnerId}}?bikeId={{myBikeId}}",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "seller", "v1", "messages", "{{partnerId}}"],
+							"query": [
+								{ "key": "bikeId", "value": "{{myBikeId}}", "description": "Lọc theo xe (tùy chọn)" },
+								{ "key": "page", "value": "1" },
+								{ "key": "limit", "value": "30" }
+							]
+						},
+						"description": "Xem lịch sử tin nhắn với một buyer. Thay {{partnerId}} bằng buyerId thực tế"
+					},
+					"response": []
+				},
+				{
+					"name": "Gửi tin nhắn cho buyer",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"content\": \"Xe vẫn còn, bạn có thể đến xem bất cứ lúc nào trong giờ hành chính\",\n  \"bikeId\": \"{{myBikeId}}\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/seller/v1/messages/{{partnerId}}",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "seller", "v1", "messages", "{{partnerId}}"]
+						},
+						"description": "Gửi tin nhắn phản hồi cho buyer. Thay {{partnerId}} bằng buyerId thực tế"
+					},
+					"response": []
+				},
+				{
+					"name": "Xem đánh giá uy tín",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": {
+							"raw": "http://localhost:3000/api/seller/v1/reviews?page=1&limit=10",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "seller", "v1", "reviews"],
+							"query": [
+								{ "key": "page", "value": "1" },
+								{ "key": "limit", "value": "10" }
+							]
+						},
+						"description": "Xem danh sách đánh giá và điểm trung bình uy tín của seller"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "🛍️ Buyer (đầy đủ)",
+			"description": "Buyer APIs - Tìm xe, đặt mua, wishlist, tin nhắn, đánh giá, báo cáo\n\n⚠️ Tất cả API yêu cầu Bearer Token",
+			"item": [
+				{
+					"name": "Tìm kiếm xe",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": {
+							"raw": "http://localhost:3000/api/buyer/v1/bikes/search?page=1&limit=10",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "buyer", "v1", "bikes", "search"],
+							"query": [
+								{ "key": "brand", "value": "", "description": "Thương hiệu (partial match)", "disabled": true },
+								{ "key": "model", "value": "", "disabled": true },
+								{ "key": "minPrice", "value": "", "disabled": true },
+								{ "key": "maxPrice", "value": "", "disabled": true },
+								{ "key": "condition", "value": "", "description": "excellent | good | fair | poor", "disabled": true },
+								{ "key": "color", "value": "", "disabled": true },
+								{ "key": "sortBy", "value": "createdAt" },
+								{ "key": "sortOrder", "value": "desc" },
+								{ "key": "page", "value": "1" },
+								{ "key": "limit", "value": "10" }
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Xe đề xuất (trang chủ)",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": {
+							"raw": "http://localhost:3000/api/buyer/v1/bikes/recommended?limit=10",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "buyer", "v1", "bikes", "recommended"],
+							"query": [{ "key": "limit", "value": "10" }]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Chi tiết xe",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": {
+							"raw": "http://localhost:3000/api/buyer/v1/bikes/{{myBikeId}}",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "buyer", "v1", "bikes", "{{myBikeId}}"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Đặt mua xe",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var json = pm.response.json();",
+									"if (json.data && json.data.id) {",
+									"    pm.collectionVariables.set('transactionId', json.data.id);",
+									"    console.log('Transaction ID saved:', json.data.id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"bikeId\": \"{{myBikeId}}\",\n  \"amount\": 45000000,\n  \"paymentMethod\": \"vnpay\",\n  \"notes\": \"Tôi muốn đặt cọc để giữ xe\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/buyer/v1/transactions",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "buyer", "v1", "transactions"]
+						},
+						"description": "Buyer đặt mua xe. Bike phải ở trạng thái 'approved'.\n\n✅ Script tự động lưu transactionId vào {{transactionId}}"
+					},
+					"response": []
+				},
+				{
+					"name": "Danh sách đơn đặt mua của tôi",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": {
+							"raw": "http://localhost:3000/api/buyer/v1/transactions?page=1&limit=10",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "buyer", "v1", "transactions"],
+							"query": [
+								{ "key": "status", "value": "", "description": "pending | completed | cancelled", "disabled": true },
+								{ "key": "page", "value": "1" },
+								{ "key": "limit", "value": "10" }
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Hủy đơn đặt mua",
+					"request": {
+						"method": "DELETE",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": {
+							"raw": "http://localhost:3000/api/buyer/v1/transactions/{{transactionId}}",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "buyer", "v1", "transactions", "{{transactionId}}"]
+						},
+						"description": "Hủy đơn đặt mua. Chỉ được hủy khi trạng thái còn 'pending'"
+					},
+					"response": []
+				},
+				{
+					"name": "Xem Wishlist",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": {
+							"raw": "http://localhost:3000/api/buyer/v1/wishlist?page=1&limit=10",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "buyer", "v1", "wishlist"],
+							"query": [{ "key": "page", "value": "1" }, { "key": "limit", "value": "10" }]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Thêm vào Wishlist",
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": {
+							"raw": "http://localhost:3000/api/buyer/v1/wishlist/{{myBikeId}}",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "buyer", "v1", "wishlist", "{{myBikeId}}"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Xóa khỏi Wishlist",
+					"request": {
+						"method": "DELETE",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": {
+							"raw": "http://localhost:3000/api/buyer/v1/wishlist/{{myBikeId}}",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "buyer", "v1", "wishlist", "{{myBikeId}}"]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Nhắn tin cho Seller",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"content\": \"Xe còn không anh? Em muốn hỏi thêm về tình trạng phanh và bánh\",\n  \"bikeId\": \"{{myBikeId}}\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/buyer/v1/messages/{{partnerId}}",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "buyer", "v1", "messages", "{{partnerId}}"]
+						},
+						"description": "Nhắn tin cho seller về xe. Thay {{partnerId}} bằng sellerId thực tế"
+					},
+					"response": []
+				},
+				{
+					"name": "Lịch sử tin nhắn với Seller",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": {
+							"raw": "http://localhost:3000/api/buyer/v1/messages/{{partnerId}}?bikeId={{myBikeId}}",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "buyer", "v1", "messages", "{{partnerId}}"],
+							"query": [
+								{ "key": "bikeId", "value": "{{myBikeId}}", "description": "Lọc theo xe (tùy chọn)" }
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Đánh giá Seller",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"sellerId\": \"{{partnerId}}\",\n  \"transactionId\": \"{{transactionId}}\",\n  \"rating\": 5,\n  \"comment\": \"Seller rất nhiệt tình, xe đúng như mô tả, giao dịch nhanh chóng\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/buyer/v1/reviews",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "buyer", "v1", "reviews"]
+						},
+						"description": "Đánh giá seller sau khi giao dịch hoàn tất. Rating từ 1-5."
+					},
+					"response": []
+				},
+				{
+					"name": "Báo cáo vi phạm",
+					"request": {
+						"method": "POST",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"reportedBikeId\": \"{{myBikeId}}\",\n  \"reason\": \"Thông tin xe không trung thực\",\n  \"description\": \"Ảnh xe không đúng với thực tế, xe bị hỏng nhiều hơn mô tả trong tin đăng\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/buyer/v1/reports",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "buyer", "v1", "reports"]
+						},
+						"description": "Báo cáo vi phạm. Cung cấp reportedUserId hoặc reportedBikeId (hoặc cả hai)"
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "💳 Payment - VNPay",
+			"description": "VNPay Payment Integration\n\n📋 Flow thanh toán:\n1. Buyer tạo transaction → POST /api/buyer/v1/transactions\n2. Tạo payment URL → POST /api/payment/v1/create/:transactionId\n3. Copy paymentUrl → mở trên trình duyệt\n4. Điền thẻ test NCB: 9704198526191432198 / NGUYEN VAN A / 07-15 / OTP: 123456\n5. Kiểm tra kết quả → GET /api/payment/v1/status/:transactionId",
+			"item": [
+				{
+					"name": "1. Tạo VNPay Payment URL",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var json = pm.response.json();",
+									"if (json.data && json.data.paymentUrl) {",
+									"    pm.collectionVariables.set('paymentUrl', json.data.paymentUrl);",
+									"    console.log('✅ Payment URL saved!');",
+									"    console.log('👉 Mở URL này trên trình duyệt để thanh toán:');",
+									"    console.log(json.data.paymentUrl);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": {
+							"raw": "http://localhost:3000/api/payment/v1/create/{{transactionId}}",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "payment", "v1", "create", "{{transactionId}}"]
+						},
+						"description": "Tạo URL thanh toán VNPay cho transaction đang pending.\n\n✅ Script tự động lưu paymentUrl vào {{paymentUrl}}\n\n👉 Sau khi gọi xong:\n- Copy paymentUrl từ response\n- Dán vào trình duyệt\n- Điền thẻ NCB test để thanh toán\n\n🃏 Thẻ test:\n- Số thẻ: 9704198526191432198\n- Tên: NGUYEN VAN A\n- Ngày PH: 07/15\n- OTP: 123456"
+					},
+					"response": []
+				},
+				{
+					"name": "2. Kiểm tra trạng thái thanh toán",
+					"request": {
+						"method": "GET",
+						"header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+						"url": {
+							"raw": "http://localhost:3000/api/payment/v1/status/{{transactionId}}",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "payment", "v1", "status", "{{transactionId}}"]
+						},
+						"description": "Kiểm tra trạng thái transaction sau khi thanh toán.\n\n- pending → chưa thanh toán\n- completed → đã thanh toán thành công\n- cancelled → thanh toán thất bại/bị hủy"
+					},
+					"response": []
+				},
+				{
+					"name": "[INFO] VNPay Return URL (browser redirect)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/payment/v1/vnpay-return",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "payment", "v1", "vnpay-return"]
+						},
+						"description": "⚠️ KHÔNG gọi trực tiếp từ Postman.\n\nEndpoint này được VNPay tự động redirect sau khi thanh toán xong.\nChỉ để tham khảo cấu trúc response."
+					},
+					"response": []
+				},
+				{
+					"name": "[INFO] VNPay IPN (server-to-server webhook)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/payment/v1/vnpay-ipn",
+							"protocol": "http", "host": ["localhost"], "port": "3000",
+							"path": ["api", "payment", "v1", "vnpay-ipn"]
+						},
+						"description": "⚠️ KHÔNG gọi trực tiếp từ Postman.\n\nEndpoint này VNPay gọi server-to-server để cập nhật kết quả thanh toán.\nĐể test IPN: dùng SIT Tool tại https://sandbox.vnpayment.vn/vnpaygw-sit-testing/"
+					},
+					"response": []
+				}
+			]
+		}
 	],
 	"variable": [
 		{
 			"key": "token",
 			"value": "",
+			"description": "Token của seller hoặc buyer hiện tại",
+			"type": "string"
+		},
+		{
+			"key": "adminToken",
+			"value": "",
+			"description": "Token của admin - dùng cho Admin APIs",
 			"type": "string"
 		},
 		{
@@ -1206,6 +1904,27 @@
 		},
 		{
 			"key": "lastInspectionId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "myBikeId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "transactionId",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "partnerId",
+			"value": "",
+			"description": "ID của buyer (khi đang dùng với seller) hoặc ID của seller (khi đang dùng với buyer)",
+			"type": "string"
+		},
+		{
+			"key": "paymentUrl",
 			"value": "",
 			"type": "string"
 		}

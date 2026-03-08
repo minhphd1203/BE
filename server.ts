@@ -1,14 +1,15 @@
-import express from 'express';
 import dotenv from 'dotenv';
+dotenv.config(); // MUST be called before any other imports that use process.env
+
+import express from 'express';
 import swaggerUi from 'swagger-ui-express';
 import authRoutes from './src/routes/authRoutes';
 import adminRoutes from './src/routes/adminRoutes';
 import inspectorRoutes from './src/routes/inspectorRoutes';
 import buyerRoutes from './src/routes/buyerRoutes';
+import sellerRoutes from './src/routes/sellerRoutes';
+import paymentRoutes from './src/routes/paymentRoutes';
 import { specs } from './src/swagger';
-
-// Load environment variables
-dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -16,6 +17,17 @@ const port = process.env.PORT || 3000;
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Request logger
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const ms = Date.now() - start;
+    const color = res.statusCode >= 400 ? '\x1b[31m' : '\x1b[32m';
+    console.log(`${color}[${res.statusCode}]\x1b[0m ${req.method} ${req.originalUrl} (${ms}ms)`);
+  });
+  next();
+});
 
 app.get('/', (req, res) => {
     res.json({
@@ -63,9 +75,40 @@ app.get('/', (req, res) => {
                 updateInspection: 'PUT /api/inspector/v1/inspections/:inspectionId'
             },
             buyer: {
-                searchBikes: 'GET /api/buyer/v1/bikes/search?brand=&model=&minPrice=&maxPrice=&condition=&page=&limit=',
+                searchBikes: 'GET /api/buyer/v1/bikes/search',
                 bikeDetail: 'GET /api/buyer/v1/bikes/:bikeId',
-                recommendedBikes: 'GET /api/buyer/v1/bikes/recommended?limit='
+                recommendedBikes: 'GET /api/buyer/v1/bikes/recommended',
+                createTransaction: 'POST /api/buyer/v1/transactions',
+                myTransactions: 'GET /api/buyer/v1/transactions',
+                cancelTransaction: 'DELETE /api/buyer/v1/transactions/:id',
+                wishlist: 'GET /api/buyer/v1/wishlist',
+                addToWishlist: 'POST /api/buyer/v1/wishlist/:bikeId',
+                removeFromWishlist: 'DELETE /api/buyer/v1/wishlist/:bikeId',
+                submitReport: 'POST /api/buyer/v1/reports',
+                addReview: 'POST /api/buyer/v1/reviews',
+                sendMessage: 'POST /api/buyer/v1/messages/:sellerId',
+                getMessages: 'GET /api/buyer/v1/messages/:sellerId'
+            },
+            payment: {
+                createPaymentUrl: 'POST /api/payment/v1/create/:transactionId',
+                vnpayReturn: 'GET /api/payment/v1/vnpay-return',
+                vnpayIPN: 'GET /api/payment/v1/vnpay-ipn',
+                paymentStatus: 'GET /api/payment/v1/status/:transactionId'
+            },
+            seller: {
+                dashboard: 'GET /api/seller/v1/dashboard',
+                createBike: 'POST /api/seller/v1/bikes',
+                myBikes: 'GET /api/seller/v1/bikes',
+                bikeDetail: 'GET /api/seller/v1/bikes/:id',
+                updateBike: 'PUT /api/seller/v1/bikes/:id',
+                toggleVisibility: 'PUT /api/seller/v1/bikes/:id/visibility',
+                deleteBike: 'DELETE /api/seller/v1/bikes/:id',
+                myTransactions: 'GET /api/seller/v1/transactions',
+                updateTransaction: 'PUT /api/seller/v1/transactions/:id',
+                conversations: 'GET /api/seller/v1/messages',
+                messageHistory: 'GET /api/seller/v1/messages/:partnerId',
+                sendMessage: 'POST /api/seller/v1/messages/:partnerId',
+                myReviews: 'GET /api/seller/v1/reviews'
             },
             other: {
                 health: 'GET /api/health'
@@ -94,6 +137,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/inspector', inspectorRoutes);
 app.use('/api/buyer', buyerRoutes);
+app.use('/api/seller', sellerRoutes);
+app.use('/api/payment', paymentRoutes);
 
 app.listen(port, () => {
     console.log(`Server is running at http://localhost:${port}`);

@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, timestamp, integer, doublePrecision, text } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, timestamp, integer, doublePrecision, text, boolean } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
 // User table
@@ -37,7 +37,8 @@ export const bikes = pgTable('bikes', {
   mileage: integer('mileage'),
   color: varchar('color', { length: 50 }),
   images: text('images').array().notNull().default([]),
-  status: varchar('status', { length: 50 }).notNull().default('pending'), // pending, approved, rejected
+  video: text('video'), // optional video URL
+  status: varchar('status', { length: 50 }).notNull().default('pending'), // pending, approved, rejected, hidden, sold
   isVerified: varchar('is_verified', { length: 20 }).default('not_verified'), // not_verified, verified, failed
   inspectionStatus: varchar('inspection_status', { length: 50 }).default('pending'), // pending, in_progress, completed
   categoryId: uuid('category_id').references(() => categories.id),
@@ -95,6 +96,37 @@ export const reports = pgTable('reports', {
   updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
 });
 
+// Wishlist table
+export const wishlists = pgTable('wishlists', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  bikeId: uuid('bike_id').notNull().references(() => bikes.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
+// Messages table (direct messaging between buyer and seller)
+export const messages = pgTable('messages', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  senderId: uuid('sender_id').notNull().references(() => users.id),
+  receiverId: uuid('receiver_id').notNull().references(() => users.id),
+  bikeId: uuid('bike_id').references(() => bikes.id), // context bike (optional)
+  content: text('content').notNull(),
+  isRead: boolean('is_read').notNull().default(false),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
+// Reviews table (buyer reviews seller after transaction)
+export const reviews = pgTable('reviews', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  reviewerId: uuid('reviewer_id').notNull().references(() => users.id),
+  sellerId: uuid('seller_id').notNull().references(() => users.id),
+  transactionId: uuid('transaction_id').references(() => transactions.id),
+  rating: integer('rating').notNull(), // 1–5
+  comment: text('comment'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
   bikes: many(bikes),
@@ -103,6 +135,11 @@ export const usersRelations = relations(users, ({ many }) => ({
   submittedReports: many(reports, { relationName: 'reporter' }),
   receivedReports: many(reports, { relationName: 'reportedUser' }),
   inspections: many(inspections),
+  wishlists: many(wishlists),
+  sentMessages: many(messages, { relationName: 'sender' }),
+  receivedMessages: many(messages, { relationName: 'receiver' }),
+  givenReviews: many(reviews, { relationName: 'reviewer' }),
+  receivedReviews: many(reviews, { relationName: 'reviewedSeller' }),
 }));
 
 export const categoriesRelations = relations(categories, ({ many }) => ({
@@ -121,6 +158,8 @@ export const bikesRelations = relations(bikes, ({ one, many }) => ({
   transactions: many(transactions),
   reports: many(reports),
   inspections: many(inspections),
+  wishlists: many(wishlists),
+  messages: many(messages),
 }));
 
 export const transactionsRelations = relations(transactions, ({ one }) => ({
@@ -172,6 +211,51 @@ export const inspectionsRelations = relations(inspections, ({ one }) => ({
   }),
 }));
 
+export const wishlistsRelations = relations(wishlists, ({ one }) => ({
+  user: one(users, {
+    fields: [wishlists.userId],
+    references: [users.id],
+  }),
+  bike: one(bikes, {
+    fields: [wishlists.bikeId],
+    references: [bikes.id],
+  }),
+}));
+
+export const messagesRelations = relations(messages, ({ one }) => ({
+  sender: one(users, {
+    fields: [messages.senderId],
+    references: [users.id],
+    relationName: 'sender',
+  }),
+  receiver: one(users, {
+    fields: [messages.receiverId],
+    references: [users.id],
+    relationName: 'receiver',
+  }),
+  bike: one(bikes, {
+    fields: [messages.bikeId],
+    references: [bikes.id],
+  }),
+}));
+
+export const reviewsRelations = relations(reviews, ({ one }) => ({
+  reviewer: one(users, {
+    fields: [reviews.reviewerId],
+    references: [users.id],
+    relationName: 'reviewer',
+  }),
+  seller: one(users, {
+    fields: [reviews.sellerId],
+    references: [users.id],
+    relationName: 'reviewedSeller',
+  }),
+  transaction: one(transactions, {
+    fields: [reviews.transactionId],
+    references: [transactions.id],
+  }),
+}));
+
 // Types
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
@@ -190,3 +274,12 @@ export type NewReport = typeof reports.$inferInsert;
 
 export type Inspection = typeof inspections.$inferSelect;
 export type NewInspection = typeof inspections.$inferInsert;
+
+export type Wishlist = typeof wishlists.$inferSelect;
+export type NewWishlist = typeof wishlists.$inferInsert;
+
+export type Message = typeof messages.$inferSelect;
+export type NewMessage = typeof messages.$inferInsert;
+
+export type Review = typeof reviews.$inferSelect;
+export type NewReview = typeof reviews.$inferInsert;
