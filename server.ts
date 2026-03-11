@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 dotenv.config(); // MUST be called before any other imports that use process.env
 
 import express from 'express';
+import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
 import authRoutes from './src/routes/authRoutes';
 import adminRoutes from './src/routes/adminRoutes';
@@ -15,6 +16,11 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 // Middleware
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
