@@ -4,6 +4,9 @@ dotenv.config(); // MUST be called before any other imports that use process.env
 import express from 'express';
 import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
+import { migrate } from 'drizzle-orm/postgres-js/migrator';
+import path from 'path';
+import bcrypt from 'bcryptjs';
 import authRoutes from './src/routes/authRoutes';
 import adminRoutes from './src/routes/adminRoutes';
 import inspectorRoutes from './src/routes/inspectorRoutes';
@@ -11,6 +14,9 @@ import buyerRoutes from './src/routes/buyerRoutes';
 import sellerRoutes from './src/routes/sellerRoutes';
 import paymentRoutes from './src/routes/paymentRoutes';
 import { specs } from './src/swagger';
+import { db } from './src/db';
+import { users } from './src/db/schema';
+import { eq } from 'drizzle-orm';
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -158,7 +164,40 @@ app.use('/api/buyer', buyerRoutes);
 app.use('/api/seller', sellerRoutes);
 app.use('/api/payment', paymentRoutes);
 
-app.listen(port, () => {
+async function bootstrap() {
+  // Auto-migrate database on startup
+  try {
+    console.log('[DB] Running migrations...');
+    await migrate(db, { migrationsFolder: path.join(__dirname, 'drizzle') });
+    console.log('[DB] Migrations completed.');
+  } catch (err) {
+    console.error('[DB] Migration error (may already be applied):', err instanceof Error ? err.message : err);
+  }
+
+  // Seed admin user if not exists
+  try {
+    const existing = await db.query.users.findFirst({ where: eq(users.email, 'admin@example.com') });
+    if (!existing) {
+      const hashed = await bcrypt.hash('admin123', 10);
+      await db.insert(users).values({
+        email: 'admin@example.com',
+        password: hashed,
+        name: 'Admin User',
+        phone: '0123456789',
+        role: 'admin',
+      });
+      console.log('[DB] Admin user created: admin@example.com / admin123');
+    } else {
+      console.log('[DB] Admin user already exists.');
+    }
+  } catch (err) {
+    console.error('[DB] Seed error:', err instanceof Error ? err.message : err);
+  }
+
+  app.listen(port, () => {
     console.log(`Server is running at http://localhost:${port}`);
-});
+  });
+}
+
+bootstrap();
 
