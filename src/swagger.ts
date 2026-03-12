@@ -10,8 +10,8 @@ const options = {
     },
     servers: [
       {
-        url: process.env.APP_URL || 'http://localhost:3000',
-        description: 'Development server',
+        url: 'https://be-production-f1ff.up.railway.app',
+        description: 'Production server (Railway)',
       },
       {
         url: 'http://localhost:3000',
