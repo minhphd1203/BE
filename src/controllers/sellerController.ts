@@ -227,7 +227,7 @@ export const getMyBikes = async (req: Request, res: Response) => {
 export const getMyBikeDetail = async (req: Request, res: Response) => {
   try {
     const sellerId = req.user!.userId;
-    const { id } = req.params;
+    const { id } = req.params as { id: string };
 
     if (!UUID_REGEX.test(id)) {
       return res.status(400).json({ success: false, message: 'ID xe không đúng định dạng' });
@@ -284,7 +284,7 @@ export const getMyBikeDetail = async (req: Request, res: Response) => {
 export const updateBike = async (req: Request, res: Response) => {
   try {
     const sellerId = req.user!.userId;
-    const { id } = req.params;
+    const { id } = req.params as {id: string};
 
     if (!UUID_REGEX.test(id)) {
       return res.status(400).json({ success: false, message: 'ID xe không đúng định dạng' });
@@ -329,7 +329,7 @@ export const updateBike = async (req: Request, res: Response) => {
     const [updatedBike] = await db
       .update(bikes)
       .set(updateData)
-      .where(and(eq(bikes.id, id), eq(bikes.sellerId, sellerId)))
+      .where(and(eq(bikes.id, id as string), eq(bikes.sellerId, sellerId)))
       .returning();
 
     const message =
@@ -354,7 +354,7 @@ export const updateBike = async (req: Request, res: Response) => {
 export const toggleBikeVisibility = async (req: Request, res: Response) => {
   try {
     const sellerId = req.user!.userId;
-    const { id } = req.params;
+    const { id } = req.params as { id: string } ;
 
     if (!UUID_REGEX.test(id)) {
       return res.status(400).json({ success: false, message: 'ID xe không đúng định dạng' });
@@ -404,7 +404,7 @@ export const toggleBikeVisibility = async (req: Request, res: Response) => {
 export const deleteBike = async (req: Request, res: Response) => {
   try {
     const sellerId = req.user!.userId;
-    const { id } = req.params;
+    const { id } = req.params as { id: string };
 
     if (!UUID_REGEX.test(id)) {
       return res.status(400).json({ success: false, message: 'ID xe không đúng định dạng' });
@@ -506,7 +506,7 @@ export const getMyTransactions = async (req: Request, res: Response) => {
 export const updateTransactionStatus = async (req: Request, res: Response) => {
   try {
     const sellerId = req.user!.userId;
-    const { id } = req.params;
+    const { id } = req.params as { id: string };
     const { status, notes } = req.body;
 
     if (!UUID_REGEX.test(id)) {
@@ -626,7 +626,7 @@ export const getConversations = async (req: Request, res: Response) => {
 export const getMessageHistory = async (req: Request, res: Response) => {
   try {
     const sellerId = req.user!.userId;
-    const { partnerId } = req.params;
+    const { partnerId } = req.params as { partnerId: string };
     const { bikeId, page = 1, limit = 30 } = req.query;
 
     if (!UUID_REGEX.test(partnerId)) {
@@ -685,7 +685,7 @@ export const getMessageHistory = async (req: Request, res: Response) => {
 export const sendMessage = async (req: Request, res: Response) => {
   try {
     const sellerId = req.user!.userId;
-    const { partnerId } = req.params;
+    const { partnerId } = req.params as { partnerId: string };
     const { content, bikeId } = req.body;
 
     if (!UUID_REGEX.test(partnerId)) {

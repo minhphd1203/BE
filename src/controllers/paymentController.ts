@@ -14,14 +14,16 @@ function dateFormat(date: Date): string {
   return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
 }
 
+
 function buildVNPayUrl(params: Record<string, string>): string {
   const secret = process.env.VNP_SECRET!;
   // Sort keys alphabetically
   const sortedKeys = Object.keys(params).sort();
-  // Build hash data (NOT URL-encoded values per VNPay spec)
-  const hashData = sortedKeys.map(k => `${k}=${params[k]}`).join('&');
-  // Build query string (URL-encoded)
-  const queryString = sortedKeys.map(k => `${k}=${encodeURIComponent(params[k])}`).join('&');
+
+  const encoded = sortedKeys.map(k => `${k}=${encodeURIComponent(params[k])}`);
+
+  const hashData = encoded.join('&');
+  const queryString = encoded.join('&');
   // Sign
   const hmac = crypto.createHmac('sha512', secret);
   const secureHash = hmac.update(Buffer.from(hashData, 'utf-8')).digest('hex');
@@ -56,7 +58,7 @@ function verifyVNPaySignature(params: Record<string, string>): boolean {
 export const createPaymentUrl = async (req: Request, res: Response) => {
   try {
     const buyerId = req.user!.userId;
-    const { transactionId } = req.params;
+    const { transactionId } = req.params as { transactionId: string };
 
     const transaction = await db.query.transactions.findFirst({
       where: and(eq(transactions.id, transactionId), eq(transactions.buyerId, buyerId)),
@@ -81,7 +83,7 @@ export const createPaymentUrl = async (req: Request, res: Response) => {
       req.socket.remoteAddress ||
       '127.0.0.1';
 
-    const orderInfo = `Thanh toan xe dap - Ma GD: ${transactionId.slice(0, 8).toUpperCase()}`;
+    const orderInfo = `ThanhToanXeDap-${transactionId.slice(0,8)}`;
     const returnUrl = process.env.VNP_RETURN_URL!;
     const tmnCode = process.env.VNP_TMNCODE!;
     const createDate = dateFormat(new Date());
@@ -93,7 +95,7 @@ export const createPaymentUrl = async (req: Request, res: Response) => {
       vnp_TmnCode: tmnCode,
       vnp_Amount: amount.toString(),
       vnp_CurrCode: 'VND',
-      vnp_TxnRef: transactionId.replace(/-/g, '').slice(0, 20),
+      vnp_TxnRef: transactionId,
       vnp_OrderInfo: orderInfo,
       vnp_OrderType: 'other',
       vnp_Locale: 'vn',
@@ -207,9 +209,7 @@ export const vnpayIPN = async (req: Request, res: Response) => {
 
     // Bước 2: Tìm giao dịch (txnRef = transactionId without dashes, first 20 chars)
     const transaction = await db.query.transactions.findFirst({
-      where: eq(transactions.id, txnRef.length === 32
-        ? `${txnRef.slice(0,8)}-${txnRef.slice(8,12)}-${txnRef.slice(12,16)}-${txnRef.slice(16,20)}-${txnRef.slice(20)}`
-        : txnRef),
+      where: eq(transactions.id, txnRef),
     });
 
     if (!transaction) {
@@ -264,7 +264,7 @@ export const vnpayIPN = async (req: Request, res: Response) => {
 export const getPaymentStatus = async (req: Request, res: Response) => {
   try {
     const buyerId = req.user!.userId;
-    const { transactionId } = req.params;
+    const { transactionId } = req.params as { transactionId: string };
 
     const transaction = await db.query.transactions.findFirst({
       where: and(eq(transactions.id, transactionId), eq(transactions.buyerId, buyerId)),

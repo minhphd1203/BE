@@ -362,7 +362,7 @@ export const getMyTransactions = async (req: Request, res: Response) => {
 export const cancelTransaction = async (req: Request, res: Response) => {
   try {
     const buyerId = req.user!.userId;
-    const { id } = req.params;
+    const id = req.params.id as string;
 
     if (!UUID_REGEX.test(id)) {
       return res.status(400).json({ success: false, message: 'ID giao dịch không đúng định dạng' });
@@ -457,7 +457,7 @@ export const getWishlist = async (req: Request, res: Response) => {
 export const addToWishlist = async (req: Request, res: Response) => {
   try {
     const userId = req.user!.userId;
-    const { bikeId } = req.params;
+    const bikeId = req.params.bikeId as string;
 
     if (!UUID_REGEX.test(bikeId)) {
       return res.status(400).json({ success: false, message: 'ID xe không đúng định dạng' });
@@ -495,7 +495,7 @@ export const addToWishlist = async (req: Request, res: Response) => {
 export const removeFromWishlist = async (req: Request, res: Response) => {
   try {
     const userId = req.user!.userId;
-    const { bikeId } = req.params;
+    const bikeId = req.params.bikeId as string;
 
     if (!UUID_REGEX.test(bikeId)) {
       return res.status(400).json({ success: false, message: 'ID xe không đúng định dạng' });
@@ -643,7 +643,7 @@ export const addReview = async (req: Request, res: Response) => {
 export const sendMessageToSeller = async (req: Request, res: Response) => {
   try {
     const buyerId = req.user!.userId;
-    const { sellerId } = req.params;
+    const sellerId = req.params.sellerId as string;
     const { content, bikeId } = req.body;
 
     if (!UUID_REGEX.test(sellerId)) {
@@ -682,7 +682,7 @@ export const sendMessageToSeller = async (req: Request, res: Response) => {
 export const getMessageWithSeller = async (req: Request, res: Response) => {
   try {
     const buyerId = req.user!.userId;
-    const { sellerId } = req.params;
+    const sellerId = req.params.sellerId as string;
     const { bikeId, page = 1, limit = 30 } = req.query;
 
     if (!UUID_REGEX.test(sellerId)) {
