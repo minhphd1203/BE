@@ -166,12 +166,14 @@ app.use('/api/payment', paymentRoutes);
 
 async function bootstrap() {
   // Auto-migrate database on startup
+  // Use process.cwd() to get project root (works in both dev and compiled dist/)
+  const migrationsFolder = path.join(process.cwd(), 'drizzle');
   try {
-    console.log('[DB] Running migrations...');
-    await migrate(db, { migrationsFolder: path.join(__dirname, 'drizzle') });
+    console.log(`[DB] Running migrations from: ${migrationsFolder}`);
+    await migrate(db, { migrationsFolder });
     console.log('[DB] Migrations completed.');
   } catch (err) {
-    console.error('[DB] Migration error (may already be applied):', err instanceof Error ? err.message : err);
+    console.error('[DB] Migration error:', err instanceof Error ? err.message : err);
   }
 
   // Seed admin user if not exists
