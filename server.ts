@@ -15,12 +15,18 @@ import { specs } from './src/swagger';
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Middleware
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}));
+// Middleware - Manual CORS to ensure preflight works
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, content-type, authorization, Accept, X-Requested-With');
+  res.header('Access-Control-Max-Age', '86400');
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+  next();
+});
+app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -133,6 +139,12 @@ app.get('/api/health', (req, res) => {
         timestamp: new Date().toISOString(),
         uptime: process.uptime()
     });
+});
+
+// Swagger JSON spec endpoint
+app.get('/api-docs/spec.json', (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.send(specs);
 });
 
 // Swagger UI Documentation
