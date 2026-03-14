@@ -6,6 +6,8 @@ import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import path from 'path';
+import crypto from 'crypto';
+import fs from 'fs';
 import bcrypt from 'bcryptjs';
 import authRoutes from './src/routes/authRoutes';
 import adminRoutes from './src/routes/adminRoutes';
@@ -14,7 +16,7 @@ import buyerRoutes from './src/routes/buyerRoutes';
 import sellerRoutes from './src/routes/sellerRoutes';
 import paymentRoutes from './src/routes/paymentRoutes';
 import { specs } from './src/swagger';
-import { db } from './src/db';
+import { db, client } from './src/db';
 import { users } from './src/db/schema';
 import { eq } from 'drizzle-orm';
 
@@ -52,35 +54,28 @@ app.get('/', (req, res) => {
         success: true,
         message: '🚴 Bike Exchange System API',
         version: '1.0.0',
+        documentation: `See full interactive docs at /api-docs`,
         endpoints: {
             auth: {
                 register: 'POST /api/auth/register',
                 login: 'POST /api/auth/login'
             },
-            bikes: {
-                getAll: 'GET /api/admin/bikes',
-                approve: 'PUT /api/admin/bikes/:id/approve',
-                reject: 'PUT /api/admin/bikes/:id/reject',
-                delete: 'DELETE /api/admin/bikes/:id'
-            },
-            users: {
-                getAll: 'GET /api/admin/users',
-                update: 'PUT /api/admin/users/:id',
-                delete: 'DELETE /api/admin/users/:id'
-            },
-            categories: {
-                getAll: 'GET /api/admin/categories',
-                create: 'POST /api/admin/categories',
-                update: 'PUT /api/admin/categories/:id',
-                delete: 'DELETE /api/admin/categories/:id'
-            },
-            transactions: {
-                getAll: 'GET /api/admin/transactions',
-                update: 'PUT /api/admin/transactions/:id'
-            },
-            reports: {
-                getAll: 'GET /api/admin/reports',
-                resolve: 'PUT /api/admin/reports/:id/resolve'
+            admin: {
+                bikes: 'GET /api/admin/v1/bike',
+                approveBike: 'PUT /api/admin/v1/bike/:id/approve',
+                rejectBike: 'PUT /api/admin/v1/bike/:id/reject',
+                deleteBike: 'DELETE /api/admin/v1/bike/:id',
+                users: 'GET /api/admin/v1/user',
+                updateUser: 'PUT /api/admin/v1/user/:id',
+                deleteUser: 'DELETE /api/admin/v1/user/:id',
+                categories: 'GET /api/admin/v1/category',
+                createCategory: 'POST /api/admin/v1/category',
+                updateCategory: 'PUT /api/admin/v1/category/:id',
+                deleteCategory: 'DELETE /api/admin/v1/category/:id',
+                transactions: 'GET /api/admin/v1/transaction',
+                updateTransaction: 'PUT /api/admin/v1/transaction/:id',
+                reports: 'GET /api/admin/v1/report',
+                resolveReport: 'PUT /api/admin/v1/report/:id/resolve'
             },
             inspector: {
                 dashboard: 'GET /api/inspector/v1/dashboard',
@@ -132,8 +127,7 @@ app.get('/', (req, res) => {
                 health: 'GET /api/health'
             }
         },
-        note: 'All admin endpoints require: Authorization: Bearer <token>',
-        documentation: 'See POSTMAN_GUIDE.md or PUBLIC_API_ACCESS.md'
+        note: 'All admin endpoints require: Authorization: Bearer <admin_token>'
     });
 });
 
@@ -154,7 +148,13 @@ app.get('/api-docs/spec.json', (req, res) => {
 });
 
 // Swagger UI Documentation
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs));
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs, {
+  swaggerOptions: {
+    defaultModelsExpandDepth: -1,
+    defaultModelExpandDepth: -1,
+    defaultResponseModelsExpandDepth: -1,
+  },
+}));
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -164,10 +164,40 @@ app.use('/api/buyer', buyerRoutes);
 app.use('/api/seller', sellerRoutes);
 app.use('/api/payment', paymentRoutes);
 
+// Sync migration tracking records when schema was set up via db:push (tables exist but __drizzle_migrations is empty)
+async function ensureMigrationsTracked(migrationsFolder: string) {
+  try {
+    const [countResult] = await client`SELECT COUNT(*)::int AS count FROM drizzle.__drizzle_migrations`;
+    if (countResult.count > 0) return; // Already tracked
+
+    const [tableCheck] = await client`SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'bikes') AS exists`;
+    if (!tableCheck.exists) return; // Tables not yet created, let migrate() handle it
+
+    const journalPath = path.join(migrationsFolder, 'meta', '_journal.json');
+    if (!fs.existsSync(journalPath)) return;
+
+    const journal = JSON.parse(fs.readFileSync(journalPath, 'utf-8'));
+    for (const entry of journal.entries) {
+      const sqlFile = path.join(migrationsFolder, `${entry.tag}.sql`);
+      if (!fs.existsSync(sqlFile)) continue;
+      const sqlContent = fs.readFileSync(sqlFile, 'utf-8');
+      const hash = crypto.createHash('sha256').update(sqlContent).digest('hex');
+      await client`INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES (${hash}, ${entry.when}) ON CONFLICT DO NOTHING`;
+    }
+    console.log('[DB] Migration tracking synced with existing schema.');
+  } catch {
+    // Not critical – ignore silently
+  }
+}
+
 async function bootstrap() {
   // Auto-migrate database on startup
   // Use process.cwd() to get project root (works in both dev and compiled dist/)
   const migrationsFolder = path.join(process.cwd(), 'drizzle');
+
+  // Ensure migration tracking is in sync when schema was bootstrapped via db:push
+  await ensureMigrationsTracked(migrationsFolder);
+
   try {
     console.log(`[DB] Running migrations from: ${migrationsFolder}`);
     await migrate(db, { migrationsFolder });
@@ -196,9 +226,26 @@ async function bootstrap() {
     console.error('[DB] Seed error:', err instanceof Error ? err.message : err);
   }
 
-  app.listen(port, () => {
-    console.log(`Server is running at http://localhost:${port}`);
+  const server = app.listen(port, () => {
+    console.log(`\n🚀 Server is running at http://localhost:${port}`);
+    console.log(`📚 Swagger UI:        http://localhost:${port}/api-docs`);
+    console.log(`📄 Swagger JSON:      http://localhost:${port}/api-docs/spec.json\n`);
   });
+
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`\n❌ Port ${port} is already in use. Kill the existing process and retry.\n`);
+      process.exit(1);
+    }
+    throw err;
+  });
+
+  const shutdown = async () => {
+    server.close();
+    await client.end();
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 }
 
 bootstrap();

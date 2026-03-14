@@ -83,10 +83,10 @@ router.post('/register', register);
  *             Admin:
  *               value:
  *                 email: admin@beswp.com
- *                 password: Admin@123
+ *                 password: admin123
  *             Inspector:
  *               value:
- *                 email: inspector@beswp.com
+ *                 email: inspector1@beswp.com
  *                 password: Test@123
  *             Buyer/Seller:
  *               value:

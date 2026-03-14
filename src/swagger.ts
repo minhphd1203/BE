@@ -6,13 +6,9 @@ const options = {
     info: {
       title: 'Bike Exchange System API',
       version: '1.0.0',
-      description: `## Bike Exchange System API\n\nHệ thống mua bán xe đạp cũ có kiểm định chất lượng.\n\n### 🔐 Hướng dẫn xác thực\n1. Gọi **POST /api/auth/login** để lấy JWT token\n2. Click nút **Authorize** 🔒 ở trên cùng bên phải\n3. Nhập vào ô Value: \`Bearer <token_của_bạn>\`\n4. Click **Authorize** → **Close**\n5. Tất cả API có 🔒 sẽ tự động dùng token đó\n\n### 👥 Tài khoản test\n| Role | Email | Password |\n|------|-------|----------|\n| 👑 Admin | admin@beswp.com | Admin@123 |\n| 🔍 Inspector | inspector@beswp.com | Test@123 |\n| 🛒 Buyer / Seller | seller1@beswp.com | Test@123 |`,
+      description: `## Bike Exchange System API\n\nHệ thống mua bán xe đạp cũ có kiểm định chất lượng.\n\n### 🔐 Hướng dẫn xác thực\n1. Gọi **POST /api/auth/login** để lấy JWT token\n2. Click nút **Authorize** 🔒 ở trên cùng bên phải\n3. Nhập vào ô Value: \`Bearer <token_của_bạn>\`\n4. Click **Authorize** → **Close**\n5. Tất cả API có 🔒 sẽ tự động dùng token đó\n\n### 👥 Tài khoản test\n| Role | Email | Password |\n|------|-------|----------|\n| 👑 Admin | admin@beswp.com | admin123 |\n| 🔍 Inspector | inspector1@beswp.com | Test@123 |\n| 🛒 Buyer / Seller | seller1@beswp.com | Test@123 |`,
     },
     servers: [
-      {
-        url: 'https://be-production-f1ff.up.railway.app',
-        description: 'Production server (Railway)',
-      },
       {
         url: 'http://localhost:3000',
         description: 'Local server',
