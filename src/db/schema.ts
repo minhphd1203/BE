@@ -53,7 +53,9 @@ export const transactions = pgTable('transactions', {
   bikeId: uuid('bike_id').notNull().references(() => bikes.id),
   buyerId: uuid('buyer_id').notNull().references(() => users.id),
   sellerId: uuid('seller_id').notNull().references(() => users.id),
-  amount: doublePrecision('amount').notNull(),
+  amount: doublePrecision('amount').notNull(), // Amount paid in this transaction
+  transactionType: varchar('transaction_type', { length: 50 }).notNull().default('full_payment'), // full_payment, deposit
+  remainingBalance: doublePrecision('remaining_balance'), // For deposits, the remaining amount to pay
   status: varchar('status', { length: 50 }).notNull().default('pending'), // pending, completed, cancelled
   paymentMethod: varchar('payment_method', { length: 50 }),
   notes: text('notes'),

@@ -149,24 +149,63 @@ router.get('/v1/bikes/:bikeId', isAuthenticated, getBikeDetail);
  *         application/json:
  *           schema:
  *             type: object
- *             required: [bikeId, amount]
+ *             required: [bikeId, transactionType]
  *             properties:
  *               bikeId:
  *                 type: string
  *                 format: uuid
+ *                 description: "Bike ID to transaction"
+ *               transactionType:
+ *                 type: string
+ *                 enum: [full_payment, deposit]
+ *                 default: full_payment
+ *                 description: "full_payment: thanh toán đầy đủ | deposit: đặt cọc để có ưu tiên (10%-30% giá xe)"
  *               amount:
  *                 type: number
- *                 example: 45000000
+ *                 description: "For full_payment: must equal bike price. For deposit: must be between 10% to 30% of bike price"
+ *                 example: 6750000
  *               paymentMethod:
  *                 type: string
  *                 enum: [cash, vnpay, bank_transfer]
  *                 example: "vnpay"
  *               notes:
  *                 type: string
- *                 example: "Tôi muốn đặt cọc 10% để giữ xe"
+ *                 default: null
+ *                 description: "(Optional) If not provided, automatically generated with deposit percentage and remaining balance"
+ *                 example: "Tôi muốn đặt cọc 15% để giữ xe"
  *     responses:
  *       201:
- *         description: Đặt mua thành công
+ *         description: Giao dịch thành công
+ *         schema:
+ *           type: object
+ *           properties:
+ *             success:
+ *               type: boolean
+ *             data:
+ *               type: object
+ *               properties:
+ *                 id:
+ *                   type: string
+ *                   format: uuid
+ *                 bikeId:
+ *                   type: string
+ *                   format: uuid
+ *                 buyerId:
+ *                   type: string
+ *                   format: uuid
+ *                 sellerId:
+ *                   type: string
+ *                   format: uuid
+ *                 amount:
+ *                   type: number
+ *                 transactionType:
+ *                   type: string
+ *                   enum: [full_payment, deposit]
+ *                 remainingBalance:
+ *                   type: number
+ *                   description: "For deposits, the remaining amount to pay. Null for full payments"
+ *                 status:
+ *                   type: string
  *       400:
  *         description: Xe không hợp lệ hoặc đã có đơn pending
  *       404:

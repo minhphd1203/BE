@@ -1,8 +1,9 @@
 import { Request, Response } from 'express';
 import { db } from '../db';
 import { bikes, transactions, wishlists, reports, messages, reviews } from '../db/schema';
-import { desc, eq, and, like, lte, gte, or } from 'drizzle-orm';
+import { desc, eq, and, ilike, lte, gte, or } from 'drizzle-orm';
 import { ApiResponse } from '../models';
+import { TRANSACTION_TYPE_OPTIONS, TRANSACTION_TYPES } from '../constants/transactionTypes';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -47,11 +48,11 @@ export const searchBikes = async (req: Request, res: Response) => {
 
     // Add optional filters
     if (brand) {
-      filters.push(like(bikes.brand, `%${brand}%`));
+      filters.push(ilike(bikes.brand, `%${brand}%`));
     }
 
     if (model) {
-      filters.push(like(bikes.model, `%${model}%`));
+      filters.push(ilike(bikes.model, `%${model}%`));
     }
 
     if (minPrice) {
@@ -67,7 +68,7 @@ export const searchBikes = async (req: Request, res: Response) => {
     }
 
     if (color) {
-      filters.push(like(bikes.color, `%${color}%`));
+      filters.push(ilike(bikes.color, `%${color}%`));
     }
 
     // Determine sort field
@@ -162,8 +163,7 @@ export const getBikeDetail = async (req: Request, res: Response) => {
     const bikeId = req.params.bikeId as string;
 
     // Validate UUID format
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (!uuidRegex.test(bikeId)) {
+    if (!UUID_REGEX.test(bikeId)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid bike ID format',
@@ -244,7 +244,7 @@ export const getBikeDetail = async (req: Request, res: Response) => {
 export const createTransaction = async (req: Request, res: Response) => {
   try {
     const buyerId = req.user!.userId;
-    const { bikeId, paymentMethod, notes } = req.body;
+    const { bikeId, amount, transactionType = 'full_payment', paymentMethod, notes } = req.body;
 
     if (!bikeId) {
       return res.status(400).json({ success: false, message: 'Thiếu thông tin bắt buộc: bikeId' });
@@ -252,6 +252,14 @@ export const createTransaction = async (req: Request, res: Response) => {
 
     if (!UUID_REGEX.test(bikeId)) {
       return res.status(400).json({ success: false, message: 'ID xe không đúng định dạng' });
+    }
+
+    if (!TRANSACTION_TYPE_OPTIONS.includes(transactionType)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Invalid transaction type. Must be one of: ${TRANSACTION_TYPE_OPTIONS.join(', ')}`,
+        allowedTypes: TRANSACTION_TYPE_OPTIONS
+      });
     }
 
     const bike = await db.query.bikes.findFirst({
@@ -279,15 +287,72 @@ export const createTransaction = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Bạn đã có đơn đặt mua đang chờ xử lý cho xe này' });
     }
 
+    // Determine transaction amount and remaining balance
+    let transactionAmount: number;
+    let remainingBalance: number | null = null;
+    let finalNotes = notes || '';
+
+    if (transactionType === TRANSACTION_TYPES.FULL_PAYMENT) {
+      // Full payment: amount = full bike price
+      if (amount && amount !== bike.price) {
+        return res.status(400).json({
+          success: false,
+          message: `Full payment amount must equal bike price (${bike.price}). Received: ${amount}`,
+        });
+      }
+      transactionAmount = bike.price;
+      remainingBalance = null;
+    } else {
+      // Deposit: amount must be between 10% - 30% of bike price
+      if (!amount || amount <= 0) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Deposit amount must be greater than 0' 
+        });
+      }
+      
+      const minDeposit = bike.price * 0.1;  // 10%
+      const maxDeposit = bike.price * 0.3;  // 30%
+      const depositPercentage = (amount / bike.price) * 100;
+      
+      if (amount < minDeposit) {
+        return res.status(400).json({ 
+          success: false, 
+          message: `Deposit too low. Minimum deposit is 10% of bike price: ${minDeposit.toFixed(0)}`,
+          minimumDeposit: minDeposit,
+          minimumPercentage: '10%'
+        });
+      }
+      
+      if (amount > maxDeposit) {
+        return res.status(400).json({ 
+          success: false, 
+          message: `Deposit too high. Maximum deposit is 30% of bike price: ${maxDeposit.toFixed(0)}`,
+          maximumDeposit: maxDeposit,
+          maximumPercentage: '30%'
+        });
+      }
+      
+      transactionAmount = amount;
+      remainingBalance = bike.price - amount;
+      
+      // Generate automatic notes if not provided
+      if (!notes) {
+        finalNotes = `Đặt cọc ${depositPercentage.toFixed(1)}% (${amount.toFixed(0)}) để giữ xe. Còn lại ${remainingBalance.toFixed(0)} cần thanh toán khi nhận xe.`;
+      }
+    }
+
     const [newTransaction] = await db
       .insert(transactions)
       .values({
         bikeId,
         buyerId,
         sellerId: bike.sellerId,
-        amount: bike.price,
+        amount: transactionAmount,
+        transactionType,
+        remainingBalance,
         paymentMethod: paymentMethod || null,
-        notes: notes || null,
+        notes: finalNotes || null,
         status: 'pending',
       })
       .returning();
@@ -295,7 +360,9 @@ export const createTransaction = async (req: Request, res: Response) => {
     res.status(201).json({
       success: true,
       data: newTransaction,
-      message: 'Đặt mua thành công. Đang chờ seller xác nhận.',
+      message: transactionType === TRANSACTION_TYPES.FULL_PAYMENT 
+        ? 'Thanh toán đầy đủ thành công. Đang chờ seller xác nhận.'
+        : 'Đặt cọc thành công. Bạn có ưu tiên mua xe này.',
     });
   } catch (error) {
     res.status(500).json({

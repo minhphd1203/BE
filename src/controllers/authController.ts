@@ -34,7 +34,7 @@ export const register = async (req: Request, res: Response) => {
         password: hashedPassword,
         name,
         phone: phone || null,
-        role: 'buyer', // Luôn là 'buyer' khi đăng ký
+        role: 'buyer', 
       })
       .returning({
         id: users.id,
@@ -119,6 +119,30 @@ export const login = async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       message: 'Error logging in',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+// Đăng xuất
+export const logout = async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+
+    const response: ApiResponse = {
+      success: true,
+      data: {
+        userId: user.userId,
+        email: user.email,
+      },
+      message: 'Logged out successfully. Please delete the token from your client.',
+    };
+
+    res.status(200).json(response);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error logging out',
       error: error instanceof Error ? error.message : 'Unknown error',
     });
   }

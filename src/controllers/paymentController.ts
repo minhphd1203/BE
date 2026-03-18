@@ -198,36 +198,56 @@ export const vnpayIPN = async (req: Request, res: Response) => {
   try {
     const params = req.query as Record<string, string>;
 
+    console.log('[VNPay IPN] Received IPN callback');
+    console.log('[VNPay IPN] Query params:', params);
+
     // Bước 1: Xác thực chữ ký
     if (!verifyVNPaySignature(params)) {
+      console.log('[VNPay IPN] ❌ Signature verification failed');
       return res.json({ RspCode: '97', Message: 'Invalid checksum' });
     }
+
+    console.log('[VNPay IPN] ✓ Signature verified');
 
     const txnRef = params['vnp_TxnRef'];
     const responseCode = params['vnp_ResponseCode'];
     const vnpAmount = parseInt(params['vnp_Amount']);
 
-    // Bước 2: Tìm giao dịch (txnRef = transactionId without dashes, first 20 chars)
+    console.log('[VNPay IPN] txnRef:', txnRef);
+    console.log('[VNPay IPN] responseCode:', responseCode);
+    console.log('[VNPay IPN] vnpAmount:', vnpAmount);
+
+    // Bước 2: Tìm giao dịch (txnRef = transaction ID)
     const transaction = await db.query.transactions.findFirst({
       where: eq(transactions.id, txnRef),
     });
 
+    console.log('[VNPay IPN] transaction found:', !!transaction);
+
     if (!transaction) {
+      console.log('[VNPay IPN] ❌ Transaction not found for txnRef:', txnRef);
       return res.json({ RspCode: '01', Message: 'Order not found' });
     }
 
     // Bước 3: Kiểm tra số tiền
     const expectedAmount = Math.round(transaction.amount * 100);
+    console.log('[VNPay IPN] Amount check - expected:', expectedAmount, 'received:', vnpAmount);
+    
     if (vnpAmount !== expectedAmount) {
+      console.log('[VNPay IPN] ❌ Amount mismatch');
       return res.json({ RspCode: '04', Message: 'Invalid amount' });
     }
 
     // Bước 4: Idempotent check
+    console.log('[VNPay IPN] Current transaction status:', transaction.status);
+    
     if (transaction.status === 'completed') {
+      console.log('[VNPay IPN] ⚠️  Transaction already completed');
       return res.json({ RspCode: '02', Message: 'Order already confirmed' });
     }
 
     if (responseCode !== '00') {
+      console.log('[VNPay IPN] Payment failed with code:', responseCode);
       await db
         .update(transactions)
         .set({ status: 'cancelled', notes: `VNPay failed: ${responseCode}` })
@@ -236,6 +256,8 @@ export const vnpayIPN = async (req: Request, res: Response) => {
     }
 
     // Bước 5: Cập nhật thành công
+    console.log('[VNPay IPN] ✓ Updating transaction to completed');
+    
     await db
       .update(transactions)
       .set({
@@ -245,9 +267,12 @@ export const vnpayIPN = async (req: Request, res: Response) => {
       })
       .where(eq(transactions.id, transaction.id));
 
+    console.log('[VNPay IPN] ✓ Updated transaction, now updating bike to sold');
+    
     await db.update(bikes).set({ status: 'sold' }).where(eq(bikes.id, transaction.bikeId));
 
-    console.log(`[VNPay IPN] Payment success for transaction ${transaction.id}`);
+    console.log(`[VNPay IPN] ✓ Payment success for transaction ${transaction.id}`);
+    console.log('VNPAY IPN call', )
     return res.json({ RspCode: '00', Message: 'Confirm success' });
   } catch (error) {
     console.error('[VNPay IPN Error]:', error);
