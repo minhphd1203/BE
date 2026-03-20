@@ -1,5 +1,6 @@
 import express from 'express';
-import { register, login } from '../controllers/authController';
+import { register, login, logout } from '../controllers/authController';
+import { isAuthenticated } from '../middleware/authMiddleware';
 
 const router = express.Router();
 
@@ -118,5 +119,43 @@ router.post('/register', register);
  *         description: Sai email hoặc password
  */
 router.post('/login', login);
+
+/**
+ * @swagger
+ * /api/auth/logout:
+ *   post:
+ *     summary: Đăng xuất tài khoản (xóa token khỏi client)
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Đăng xuất thành công
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     userId:
+ *                       type: string
+ *                       format: uuid
+ *                     email:
+ *                       type: string
+ *                       example: user@example.com
+ *                 message:
+ *                   type: string
+ *                   example: Logged out successfully. Please delete the token from your client.
+ *       401:
+ *         description: Unauthorized - No token provided
+ *       500:
+ *         description: Server error
+ */
+router.post('/logout', isAuthenticated, logout);
 
 export default router;

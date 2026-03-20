@@ -15,6 +15,7 @@ import inspectorRoutes from './src/routes/inspectorRoutes';
 import buyerRoutes from './src/routes/buyerRoutes';
 import sellerRoutes from './src/routes/sellerRoutes';
 import paymentRoutes from './src/routes/paymentRoutes';
+import profileRoutes from './src/routes/profileRoutes';
 import { specs } from './src/swagger';
 import { db, client } from './src/db';
 import { users } from './src/db/schema';
@@ -163,6 +164,7 @@ app.use('/api/inspector', inspectorRoutes);
 app.use('/api/buyer', buyerRoutes);
 app.use('/api/seller', sellerRoutes);
 app.use('/api/payment', paymentRoutes);
+app.use('/api/profile', profileRoutes);
 
 // Sync migration tracking records when schema was set up via db:push (tables exist but __drizzle_migrations is empty)
 async function ensureMigrationsTracked(migrationsFolder: string) {

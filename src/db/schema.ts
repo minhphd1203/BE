@@ -38,7 +38,7 @@ export const bikes = pgTable('bikes', {
   color: varchar('color', { length: 50 }),
   images: text('images').array().notNull().default([]),
   video: text('video'), // optional video URL
-  status: varchar('status', { length: 50 }).notNull().default('pending'), // pending, approved, rejected, hidden, sold
+  status: varchar('status', { length: 50 }).notNull().default('pending'), // pending, approved, rejected, hidden, reserved, sold
   isVerified: varchar('is_verified', { length: 20 }).default('not_verified'), // not_verified, verified, failed
   inspectionStatus: varchar('inspection_status', { length: 50 }).default('pending'), // pending, in_progress, completed
   categoryId: uuid('category_id').references(() => categories.id),
@@ -53,7 +53,9 @@ export const transactions = pgTable('transactions', {
   bikeId: uuid('bike_id').notNull().references(() => bikes.id),
   buyerId: uuid('buyer_id').notNull().references(() => users.id),
   sellerId: uuid('seller_id').notNull().references(() => users.id),
-  amount: doublePrecision('amount').notNull(),
+  amount: doublePrecision('amount').notNull(), // Amount paid in this transaction
+  transactionType: varchar('transaction_type', { length: 50 }).notNull().default('full_payment'), // full_payment, deposit
+  remainingBalance: doublePrecision('remaining_balance'), // For deposits, the remaining amount to pay
   status: varchar('status', { length: 50 }).notNull().default('pending'), // pending, completed, cancelled
   paymentMethod: varchar('payment_method', { length: 50 }),
   notes: text('notes'),

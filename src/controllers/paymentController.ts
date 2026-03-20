@@ -125,6 +125,173 @@ export const createPaymentUrl = async (req: Request, res: Response) => {
   }
 };
 
+// ============= REMAINING BALANCE PAYMENT (AFTER DEPOSIT) =============
+
+/**
+ * POST /api/payment/v1/create-remaining/:transactionId
+ * Buyer pays the remaining balance after a deposit.
+ * Creates a NEW transaction record for the remaining balance payment.
+ * This transaction links to the original deposit transaction.
+ * 
+ * Only works for transactions with:
+ *   - transactionType = 'deposit'
+ *   - status = 'completed' (deposit was paid)
+ *   - remainingBalance > 0
+ * 
+ * Flow:
+ *  1. Buyer made a deposit (deposit transaction status = 'completed', bike = 'reserved')
+ *  2. Buyer calls this endpoint with the deposit transaction ID
+ *  3. Creates a new remaining_payment transaction + payment URL
+ *  4. VNPay processes payment → IPN updates original deposit to "fully_paid" and bike to 'sold'
+ */
+export const createRemainingPaymentUrl = async (req: Request, res: Response) => {
+  try {
+    const buyerId = req.user!.userId;
+    const { transactionId } = req.params as { transactionId: string };
+
+    // Find the deposit transaction
+    const depositTransaction = await db.query.transactions.findFirst({
+      where: and(
+        eq(transactions.id, transactionId),
+        eq(transactions.buyerId, buyerId)
+      ),
+      with: {
+        bike: { columns: { title: true, brand: true, model: true } },
+      },
+    });
+
+    if (!depositTransaction) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Không tìm thấy giao dịch' 
+      });
+    }
+
+    // Validate it's a deposit
+    if (depositTransaction.transactionType !== 'deposit') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Giao dịch này không phải đặt cọc' 
+      });
+    }
+
+    // Validate deposit is completed
+    if (depositTransaction.status !== 'completed') {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Giao dịch phải ở trạng thái completed (hiện tại: ${depositTransaction.status})` 
+      });
+    }
+
+    // Validate remaining balance exists
+    if (!depositTransaction.remainingBalance || depositTransaction.remainingBalance <= 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Không có số tiền còn lại cần thanh toán' 
+      });
+    }
+
+    // Check if remaining payment already completed for this deposit
+    const existingRemainingPayment = await db.query.transactions.findFirst({
+      where: and(
+        eq(transactions.bikeId, depositTransaction.bikeId),
+        eq(transactions.buyerId, buyerId),
+        eq(transactions.transactionType, 'remaining_payment'),
+        eq(transactions.status, 'completed')
+      ),
+    });
+
+    if (existingRemainingPayment) {
+      return res.status(400).json({
+        success: false,
+        message: 'Xe này đã được thanh toán đầy đủ rồi. Không thể tạo giao dịch thanh toán còn lại khác.'
+      });
+    }
+
+    // Delete any existing pending remaining_payment transactions for a clean slate
+    const pendingRemainingPayment = await db.query.transactions.findFirst({
+      where: and(
+        eq(transactions.bikeId, depositTransaction.bikeId),
+        eq(transactions.buyerId, buyerId),
+        eq(transactions.transactionType, 'remaining_payment'),
+        eq(transactions.status, 'pending')
+      ),
+    });
+
+    if (pendingRemainingPayment) {
+      console.log(`[Payment] Deleting old pending remaining payment: ${pendingRemainingPayment.id}`);
+      await db
+        .delete(transactions)
+        .where(eq(transactions.id, pendingRemainingPayment.id));
+      console.log(`[Payment] Old pending transaction deleted`);
+    }
+
+    // Create a new transaction record for the remaining payment
+    // This tracks the relationship between deposit and remaining payment
+    const [remainingTransaction] = await db
+      .insert(transactions)
+      .values({
+        bikeId: depositTransaction.bikeId,
+        buyerId,
+        sellerId: depositTransaction.sellerId,
+        amount: depositTransaction.remainingBalance,
+        transactionType: 'remaining_payment',
+        remainingBalance: 0,
+        notes: `Thanh toán phần còn lại của đơn đặt cọc: ${transactionId}`,
+        status: 'pending',
+      })
+      .returning();
+
+    const ipAddr =
+      ((req.headers['x-forwarded-for'] as string) || '').split(',')[0].trim() ||
+      req.socket.remoteAddress ||
+      '127.0.0.1';
+
+    const orderInfo = `ThanhToanConLai-${transactionId.slice(0, 8)}`;
+    const returnUrl = process.env.VNP_RETURN_URL!;
+    const tmnCode = process.env.VNP_TMNCODE!;
+    const createDate = dateFormat(new Date());
+    const amount = Math.round(depositTransaction.remainingBalance * 100);
+
+    const params: Record<string, string> = {
+      vnp_Version: '2.1.0',
+      vnp_Command: 'pay',
+      vnp_TmnCode: tmnCode,
+      vnp_Amount: amount.toString(),
+      vnp_CurrCode: 'VND',
+      vnp_TxnRef: remainingTransaction.id,
+      vnp_OrderInfo: orderInfo,
+      vnp_OrderType: 'other',
+      vnp_Locale: 'vn',
+      vnp_ReturnUrl: returnUrl,
+      vnp_IpAddr: ipAddr,
+      vnp_CreateDate: createDate,
+    };
+
+    const paymentUrl = buildVNPayUrl(params);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        paymentUrl,
+        remainingTransactionId: remainingTransaction.id,
+        depositTransactionId: depositTransaction.id,
+        remainingBalance: depositTransaction.remainingBalance,
+        orderInfo,
+        depositAmount: depositTransaction.amount,
+        totalPrice: depositTransaction.amount + depositTransaction.remainingBalance,
+      },
+      message: 'URL thanh toán còn lại đã được tạo. Redirect buyer đến paymentUrl.',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi khi tạo URL thanh toán còn lại',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
 // ============= VNPAY RETURN URL =============
 
 /**
@@ -198,56 +365,139 @@ export const vnpayIPN = async (req: Request, res: Response) => {
   try {
     const params = req.query as Record<string, string>;
 
+    console.log('[VNPay IPN] Received IPN callback');
+    console.log('[VNPay IPN] Query params:', params);
+
     // Bước 1: Xác thực chữ ký
     if (!verifyVNPaySignature(params)) {
+      console.log('[VNPay IPN] ❌ Signature verification failed');
       return res.json({ RspCode: '97', Message: 'Invalid checksum' });
     }
+
+    console.log('[VNPay IPN] ✓ Signature verified');
 
     const txnRef = params['vnp_TxnRef'];
     const responseCode = params['vnp_ResponseCode'];
     const vnpAmount = parseInt(params['vnp_Amount']);
 
-    // Bước 2: Tìm giao dịch (txnRef = transactionId without dashes, first 20 chars)
+    console.log('[VNPay IPN] txnRef:', txnRef);
+    console.log('[VNPay IPN] responseCode:', responseCode);
+    console.log('[VNPay IPN] vnpAmount:', vnpAmount);
+
+    // Bước 2: Tìm giao dịch (txnRef = transaction ID)
     const transaction = await db.query.transactions.findFirst({
       where: eq(transactions.id, txnRef),
     });
 
+    console.log('[VNPay IPN] transaction found:', !!transaction);
+
     if (!transaction) {
+      console.log('[VNPay IPN] ❌ Transaction not found for txnRef:', txnRef);
       return res.json({ RspCode: '01', Message: 'Order not found' });
     }
 
     // Bước 3: Kiểm tra số tiền
     const expectedAmount = Math.round(transaction.amount * 100);
+    console.log('[VNPay IPN] Amount check - expected:', expectedAmount, 'received:', vnpAmount);
+    
     if (vnpAmount !== expectedAmount) {
+      console.log('[VNPay IPN] ❌ Amount mismatch');
       return res.json({ RspCode: '04', Message: 'Invalid amount' });
     }
 
     // Bước 4: Idempotent check
+    console.log('[VNPay IPN] Current transaction status:', transaction.status);
+    
     if (transaction.status === 'completed') {
+      console.log('[VNPay IPN] ⚠️  Transaction already completed');
       return res.json({ RspCode: '02', Message: 'Order already confirmed' });
     }
 
     if (responseCode !== '00') {
-      await db
+      console.log('[VNPay IPN] Payment failed with code:', responseCode);
+      const failResult = await db
         .update(transactions)
         .set({ status: 'cancelled', notes: `VNPay failed: ${responseCode}` })
-        .where(eq(transactions.id, transaction.id));
+        .where(eq(transactions.id, transaction.id))
+        .returning();
+      console.log('[VNPay IPN] Updated failed transaction result:', failResult);
       return res.json({ RspCode: '00', Message: 'Confirm success' });
     }
 
     // Bước 5: Cập nhật thành công
-    await db
+    console.log('[VNPay IPN] ✓ Updating transaction to completed');
+    
+    // Build updated notes - preserve original and add VNPay details
+    const updatedNotes = transaction.notes 
+      ? `${transaction.notes} | VNPay TxnNo: ${params['vnp_TransactionNo']}, Bank: ${params['vnp_BankCode']}`
+      : `VNPay TxnNo: ${params['vnp_TransactionNo']}, Bank: ${params['vnp_BankCode']}`;
+    
+    const updateResult = await db
       .update(transactions)
       .set({
         status: 'completed',
         paymentMethod: 'vnpay',
-        notes: `VNPay TxnNo: ${params['vnp_TransactionNo']}, Bank: ${params['vnp_BankCode']}`,
+        notes: updatedNotes,
       })
-      .where(eq(transactions.id, transaction.id));
+      .where(eq(transactions.id, transaction.id))
+      .returning();
 
-    await db.update(bikes).set({ status: 'sold' }).where(eq(bikes.id, transaction.bikeId));
+    console.log('[VNPay IPN] ✓ Updated transaction result:', updateResult);
+    if (!updateResult || updateResult.length === 0) {
+      console.log('[VNPay IPN] ❌ ERROR: No rows updated! Transaction ID:', transaction.id);
+      return res.json({ RspCode: '99', Message: 'Failed to update transaction' });
+    }
+    console.log('[VNPay IPN] ✓ Updated transaction, now updating bike status');
+    
+    // Determine bike status and get deposit transaction for remaining payments
+    let bikeStatus = 'sold'; // Default for full payment
+    let statusMessage = 'Set bike to SOLD (full payment completed)';
+    
+    if (transaction.transactionType === 'deposit') {
+      // This is a deposit payment - bike should be reserved until remaining is paid
+      bikeStatus = 'reserved';
+      statusMessage = 'Set bike to RESERVED (deposit paid, awaiting remaining balance)';
+    } else if (transaction.transactionType === 'remaining_payment') {
+      // This is remaining payment after deposit - finalize the sale
+      bikeStatus = 'sold';
+      statusMessage = 'Set bike to SOLD (full payment completed after deposit)';
+      
+      // Extract deposit transaction ID from notes
+      const depositTxnMatch = transaction.notes?.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/);
+      if (depositTxnMatch) {
+        const depositTransactionId = depositTxnMatch[1];
+        console.log(`[VNPay IPN] Found linked deposit transaction: ${depositTransactionId}`);
+        
+        // Mark the deposit transaction as "fully_paid" in notes for auditing
+        const depositUpdateResult = await db
+          .update(transactions)
+          .set({ 
+            notes: `${transaction.notes || ''} → FULLY PAID by remaining payment`
+          })
+          .where(eq(transactions.id, depositTransactionId))
+          .returning();
+        
+        console.log(`[VNPay IPN] Updated deposit transaction result:`, depositUpdateResult);
+        if (!depositUpdateResult || depositUpdateResult.length === 0) {
+          console.log('[VNPay IPN] ⚠️  WARNING: Could not update deposit transaction notes');
+        }
+      }
+    }
+    
+    console.log(`[VNPay IPN] ${statusMessage}`);
+    
+    const bikeUpdateResult = await db
+      .update(bikes)
+      .set({ status: bikeStatus, updatedAt: new Date() })
+      .where(eq(bikes.id, transaction.bikeId))
+      .returning();
 
-    console.log(`[VNPay IPN] Payment success for transaction ${transaction.id}`);
+    console.log(`[VNPay IPN] ✓ Bike update result:`, bikeUpdateResult);
+    if (!bikeUpdateResult || bikeUpdateResult.length === 0) {
+      console.log('[VNPay IPN] ❌ ERROR: No bike rows updated! Bike ID:', transaction.bikeId);
+      return res.json({ RspCode: '99', Message: 'Failed to update bike status' });
+    }
+    console.log(`[VNPay IPN] ✓ Payment success for transaction ${transaction.id}`);
     return res.json({ RspCode: '00', Message: 'Confirm success' });
   } catch (error) {
     console.error('[VNPay IPN Error]:', error);
