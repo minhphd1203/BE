@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { db } from '../db';
-import { bikes, transactions, wishlists, reports, messages, reviews } from '../db/schema';
+import { bikes, transactions, wishlists, reports, messages, reviews, users } from '../db/schema';
 import { desc, eq, and, ilike, lte, gte, or, inArray } from 'drizzle-orm';
 import { ApiResponse } from '../models';
 import { TRANSACTION_TYPE_OPTIONS, TRANSACTION_TYPES } from '../constants/transactionTypes';
@@ -814,12 +814,47 @@ export const sendMessageToSeller = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Nội dung tin nhắn không được để trống' });
     }
 
+    if (sellerId === buyerId) {
+      return res.status(400).json({ success: false, message: 'Không thể gửi tin nhắn cho chính mình' });
+    }
+
+    const [sellerRow] = await db.select({ id: users.id }).from(users).where(eq(users.id, sellerId)).limit(1);
+    if (!sellerRow) {
+      return res.status(400).json({ success: false, message: 'Seller không tồn tại trong hệ thống' });
+    }
+
+    let resolvedBikeId: string | null = null;
+    if (bikeId !== undefined && bikeId !== null && bikeId !== '') {
+      const bid = String(bikeId);
+      if (!UUID_REGEX.test(bid)) {
+        return res.status(400).json({ success: false, message: 'bikeId không đúng định dạng UUID' });
+      }
+      const [bikeRow] = await db
+        .select({ id: bikes.id, sellerId: bikes.sellerId })
+        .from(bikes)
+        .where(eq(bikes.id, bid))
+        .limit(1);
+      if (!bikeRow) {
+        return res.status(400).json({
+          success: false,
+          message: 'Xe (bikeId) không tồn tại. Bỏ bikeId hoặc dùng id xe thật',
+        });
+      }
+      if (bikeRow.sellerId !== sellerId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Xe này không thuộc seller bạn đang nhắn tin',
+        });
+      }
+      resolvedBikeId = bid;
+    }
+
     const [newMessage] = await db
       .insert(messages)
       .values({
         senderId: buyerId,
         receiverId: sellerId,
-        bikeId: bikeId || null,
+        bikeId: resolvedBikeId,
         content: content.trim(),
         isRead: false,
       })

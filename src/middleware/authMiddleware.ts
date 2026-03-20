@@ -69,6 +69,24 @@ export const isAuthenticated = (req: Request, res: Response, next: NextFunction)
   }
 };
 
+/**
+ * Chỉ cho phép sau khi đã qua isAuthenticated.
+ * Gọi: router.use(isAuthenticated); router.use(requireRole('seller'));
+ */
+export const requireRole = (...allowedRoles: string[]) => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({
+        message: `Access denied. Required role: ${allowedRoles.join(' or ')}.`,
+      });
+    }
+    next();
+  };
+};
+
 // Middleware kiểm tra role Buyer
 export const isBuyer = (req: Request, res: Response, next: NextFunction) => {
   const token = req.headers['authorization']?.split(' ')[1];

@@ -1,9 +1,16 @@
 import { Request, Response } from 'express';
 import { db } from '../db';
-import { bikes, transactions, messages, reviews } from '../db/schema';
+import { bikes, transactions, messages, reviews, categories, users } from '../db/schema';
 import { desc, eq, and, or, like, asc } from 'drizzle-orm';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Parse mileage: 0 is valid; only null/undefined/'' → null */
+function parseMileage(value: unknown): number | null {
+  if (value === undefined || value === null || value === '') return null;
+  const n = parseInt(String(value), 10);
+  return Number.isNaN(n) ? null : n;
+}
 
 // ============= DASHBOARD =============
 
@@ -99,6 +106,26 @@ export const createBike = async (req: Request, res: Response) => {
       });
     }
 
+    let finalCategoryId: string | null = null;
+    if (categoryId !== undefined && categoryId !== null && categoryId !== '') {
+      const cid = String(categoryId);
+      if (!UUID_REGEX.test(cid)) {
+        return res.status(400).json({ success: false, message: 'categoryId không đúng định dạng UUID' });
+      }
+      const [catRow] = await db
+        .select({ id: categories.id })
+        .from(categories)
+        .where(eq(categories.id, cid))
+        .limit(1);
+      if (!catRow) {
+        return res.status(400).json({
+          success: false,
+          message: 'Danh mục không tồn tại. Lấy id từ API danh mục hoặc gửi categoryId: null',
+        });
+      }
+      finalCategoryId = cid;
+    }
+
     const [newBike] = await db
       .insert(bikes)
       .values({
@@ -109,11 +136,11 @@ export const createBike = async (req: Request, res: Response) => {
         year: parseInt(year),
         price: parseFloat(price),
         condition,
-        mileage: mileage ? parseInt(mileage) : null,
+        mileage: parseMileage(mileage),
         color: color || null,
         images: images || [],
         video: video || null,
-        categoryId: categoryId || null,
+        categoryId: finalCategoryId,
         sellerId,
         status: 'pending',
         isVerified: 'not_verified',
@@ -146,8 +173,16 @@ export const getMyBikes = async (req: Request, res: Response) => {
 
     const filters: any[] = [eq(bikes.sellerId, sellerId)];
 
+    const allowedBikeStatuses = ['pending', 'approved', 'rejected', 'hidden', 'sold', 'reserved'];
     if (status) {
-      filters.push(eq(bikes.status, status as string));
+      const s = String(status);
+      if (!allowedBikeStatuses.includes(s)) {
+        return res.status(400).json({
+          success: false,
+          message: `status không hợp lệ. Cho phép: ${allowedBikeStatuses.join(', ')}`,
+        });
+      }
+      filters.push(eq(bikes.status, s));
     }
 
     if (search) {
@@ -312,12 +347,42 @@ export const updateBike = async (req: Request, res: Response) => {
     if (model !== undefined) updateData.model = model;
     if (year !== undefined) updateData.year = parseInt(year);
     if (price !== undefined) updateData.price = parseFloat(price);
-    if (condition !== undefined) updateData.condition = condition;
-    if (mileage !== undefined) updateData.mileage = mileage ? parseInt(mileage) : null;
+    if (condition !== undefined) {
+      const validConditions = ['excellent', 'good', 'fair', 'poor'];
+      if (!validConditions.includes(condition)) {
+        return res.status(400).json({
+          success: false,
+          message: `Tình trạng xe không hợp lệ. Phải là một trong: ${validConditions.join(', ')}`,
+        });
+      }
+      updateData.condition = condition;
+    }
+    if (mileage !== undefined) updateData.mileage = parseMileage(mileage);
     if (color !== undefined) updateData.color = color;
     if (images !== undefined) updateData.images = images;
     if (video !== undefined) updateData.video = video;
-    if (categoryId !== undefined) updateData.categoryId = categoryId;
+    if (categoryId !== undefined) {
+      if (categoryId === null || categoryId === '') {
+        updateData.categoryId = null;
+      } else {
+        const cid = String(categoryId);
+        if (!UUID_REGEX.test(cid)) {
+          return res.status(400).json({ success: false, message: 'categoryId không đúng định dạng UUID' });
+        }
+        const [catRow] = await db
+          .select({ id: categories.id })
+          .from(categories)
+          .where(eq(categories.id, cid))
+          .limit(1);
+        if (!catRow) {
+          return res.status(400).json({
+            success: false,
+            message: 'Danh mục không tồn tại. Lấy id từ API danh mục hoặc gửi categoryId: null',
+          });
+        }
+        updateData.categoryId = cid;
+      }
+    }
 
     // Nếu sửa thông tin kỹ thuật/giá cả của tin đã approved → reset về pending
     const coreFields = ['title', 'description', 'brand', 'model', 'year', 'price', 'condition'];
@@ -457,8 +522,18 @@ export const getMyTransactions = async (req: Request, res: Response) => {
     const sellerId = req.user!.userId;
     const { status, page = 1, limit = 10 } = req.query;
 
+    const allowedTxStatuses = ['pending', 'completed', 'cancelled'];
     const filters: any[] = [eq(transactions.sellerId, sellerId)];
-    if (status) filters.push(eq(transactions.status, status as string));
+    if (status) {
+      const s = String(status);
+      if (!allowedTxStatuses.includes(s)) {
+        return res.status(400).json({
+          success: false,
+          message: `status không hợp lệ. Cho phép: ${allowedTxStatuses.join(', ')}`,
+        });
+      }
+      filters.push(eq(transactions.status, s));
+    }
 
     const pageNum = parseInt(page as string) || 1;
     const limitNum = parseInt(limit as string) || 10;
@@ -645,7 +720,22 @@ export const getMessageHistory = async (req: Request, res: Response) => {
     ];
 
     if (bikeId) {
-      filters.push(eq(messages.bikeId, bikeId as string));
+      const bid = String(bikeId);
+      if (!UUID_REGEX.test(bid)) {
+        return res.status(400).json({ success: false, message: 'bikeId query không đúng định dạng UUID' });
+      }
+      const [owned] = await db
+        .select({ id: bikes.id })
+        .from(bikes)
+        .where(and(eq(bikes.id, bid), eq(bikes.sellerId, sellerId)))
+        .limit(1);
+      if (!owned) {
+        return res.status(403).json({
+          success: false,
+          message: 'Không được xem lịch sử tin nhắn theo xe không thuộc bạn',
+        });
+      }
+      filters.push(eq(messages.bikeId, bid));
     }
 
     const history = await db.query.messages.findMany({
@@ -696,12 +786,47 @@ export const sendMessage = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Nội dung tin nhắn không được để trống' });
     }
 
+    if (partnerId === sellerId) {
+      return res.status(400).json({ success: false, message: 'Không thể gửi tin nhắn cho chính mình' });
+    }
+
+    const [receiver] = await db.select({ id: users.id }).from(users).where(eq(users.id, partnerId)).limit(1);
+    if (!receiver) {
+      return res.status(400).json({ success: false, message: 'Người nhận không tồn tại trong hệ thống' });
+    }
+
+    let resolvedBikeId: string | null = null;
+    if (bikeId !== undefined && bikeId !== null && bikeId !== '') {
+      const bid = String(bikeId);
+      if (!UUID_REGEX.test(bid)) {
+        return res.status(400).json({ success: false, message: 'bikeId không đúng định dạng UUID' });
+      }
+      const [bikeRow] = await db
+        .select({ id: bikes.id, sellerId: bikes.sellerId })
+        .from(bikes)
+        .where(eq(bikes.id, bid))
+        .limit(1);
+      if (!bikeRow) {
+        return res.status(400).json({
+          success: false,
+          message: 'Xe (bikeId) không tồn tại. Bỏ bikeId hoặc dùng id xe thật của bạn',
+        });
+      }
+      if (bikeRow.sellerId !== sellerId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Chỉ được gắn tin nhắn với xe do chính bạn đăng',
+        });
+      }
+      resolvedBikeId = bid;
+    }
+
     const [newMessage] = await db
       .insert(messages)
       .values({
         senderId: sellerId,
         receiverId: partnerId,
-        bikeId: bikeId || null,
+        bikeId: resolvedBikeId,
         content: content.trim(),
         isRead: false,
       })
@@ -753,8 +878,8 @@ export const getMyReviews = async (req: Request, res: Response) => {
       offset,
     });
 
-    const averageRating =
-      total > 0 ? Math.round((countResult.reduce(() => 0, 0) / total) * 10) / 10 : 0;
+    const ratingSum = allReviews.reduce((sum, r) => sum + r.rating, 0);
+    const averageRating = total > 0 ? Math.round((ratingSum / total) * 10) / 10 : 0;
 
     res.status(200).json({
       success: true,

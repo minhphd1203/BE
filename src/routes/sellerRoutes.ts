@@ -14,12 +14,13 @@ import {
   sendMessage,
   getMyReviews,
 } from '../controllers/sellerController';
-import { isAuthenticated } from '../middleware/authMiddleware';
+import { isAuthenticated, requireRole } from '../middleware/authMiddleware';
 
 const router = express.Router();
 
-// Tất cả seller routes yêu cầu đăng nhập
+// Chỉ user có role seller mới được gọi (tránh buyer/admin dùng nhầm / lạm dụng API)
 router.use(isAuthenticated);
+router.use(requireRole('seller'));
 
 // ============= DASHBOARD =============
 
