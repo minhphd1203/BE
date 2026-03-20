@@ -157,7 +157,7 @@ export const downgradeFromSeller = async (req: Request, res: Response) => {
 
 /**
  * GET /api/profile/v1/info
- * Get current user profile information
+ * Get current user's own profile information (full details with email, phone)
  */
 export const getProfile = async (req: Request, res: Response) => {
   try {
@@ -188,6 +188,60 @@ export const getProfile = async (req: Request, res: Response) => {
     const response: ApiResponse = {
       success: true,
       data: user,
+      message: 'Profile fetched successfully',
+    };
+
+    res.status(200).json(response);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching profile',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
+ * GET /api/profile/v1/:userId
+ * View another user's profile (limited public info - no email/phone for privacy)
+ * Only works for buyer/seller profiles
+ * Blocks access to inspector/admin profiles with 403 Forbidden
+ */
+export const getOtherProfile = async (req: Request, res: Response) => {
+  try {
+    const { userId } = req.params as { userId: string };
+
+    // Check if target user exists
+    const targetUser = await db.query.users.findFirst({
+      where: eq(users.id, userId),
+    });
+
+    if (!targetUser) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    // Block access to inspector/admin profiles (403 Forbidden)
+    if (targetUser.role === 'inspector' || targetUser.role === 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied: Cannot view this profile',
+      });
+    }
+
+    // Return public info only (hide email and phone for privacy/safety)
+    const response: ApiResponse = {
+      success: true,
+      data: {
+        id: targetUser.id,
+        name: targetUser.name,
+        avatar: targetUser.avatar,
+        role: targetUser.role,
+        createdAt: targetUser.createdAt,
+        updatedAt: targetUser.updatedAt,
+      },
       message: 'Profile fetched successfully',
     };
 

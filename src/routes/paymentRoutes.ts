@@ -1,5 +1,5 @@
 import express from 'express';
-import { createPaymentUrl, vnpayReturn, vnpayIPN, getPaymentStatus } from '../controllers/paymentController';
+import { createPaymentUrl, createRemainingPaymentUrl, vnpayReturn, vnpayIPN, getPaymentStatus } from '../controllers/paymentController';
 import { isAuthenticated } from '../middleware/authMiddleware';
 
 const router = express.Router();
@@ -172,5 +172,78 @@ router.get('/v1/vnpay-ipn', vnpayIPN);
  *         description: Unauthorized
  */
 router.get('/v1/status/:transactionId', isAuthenticated, getPaymentStatus);
+
+/**
+ * @swagger
+ * /api/payment/v1/create-remaining/{depositTransactionId}:
+ *   post:
+ *     summary: Tạo URL thanh toán cho phần tiền còn lại sau khi đặt cọc
+ *     description: |
+ *       Buyer gọi endpoint này để thanh toán phần tiền còn lại sau khi đã đặt cọc.
+ *       Endpoint này chỉ hoạt động khi:
+ *       - Transaction là deposit (transactionType = 'deposit')
+ *       - Deposit đã được thanh toán xong (status = 'completed')
+ *       - Còn tiền lỗi cần thanh toán (remainingBalance > 0)
+ *
+ *       **Flow thanh toán phần còn lại:**
+ *       1. Buyer đặt cọc → tạo deposit transaction
+ *       2. `POST /api/payment/v1/create/:depositTransactionId` → thanh toán deposit
+ *       3. Xe chuyển sang trạng thái 'reserved'
+ *       4. Buyer gọi `POST /api/payment/v1/create-remaining/:depositTransactionId` → nhận paymentUrl
+ *       5. Frontend redirect → paymentUrl (VNPay payment page)
+ *       6. Buyer thanh toán phần còn lại
+ *       7. VNPay gọi IPN → cập nhật DB, xe chuyển sang 'sold'
+ *     tags: [Payment - VNPay]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: depositTransactionId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: ID của deposit transaction đã thanh toán
+ *     responses:
+ *       200:
+ *         description: URL thanh toán phần còn lại đã được tạo
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     paymentUrl:
+ *                       type: string
+ *                       example: "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?..."
+ *                     remainingTransactionId:
+ *                       type: string
+ *                       format: uuid
+ *                       description: ID của remaining payment transaction mới
+ *                     depositTransactionId:
+ *                       type: string
+ *                       format: uuid
+ *                     remainingBalance:
+ *                       type: number
+ *                       example: 18000000
+ *                     depositAmount:
+ *                       type: number
+ *                       example: 2000000
+ *                     totalPrice:
+ *                       type: number
+ *                       example: 20000000
+ *       400:
+ *         description: Transaction không phải là deposit hoặc chưa thanh toán
+ *       404:
+ *         description: Không tìm thấy deposit transaction
+ *       401:
+ *         description: Unauthorized
+ */
+router.post('/v1/create-remaining/:transactionId', isAuthenticated, createRemainingPaymentUrl);
 
 export default router;

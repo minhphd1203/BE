@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { db } from '../db';
 import { bikes, transactions, wishlists, reports, messages, reviews } from '../db/schema';
-import { desc, eq, and, ilike, lte, gte, or } from 'drizzle-orm';
+import { desc, eq, and, ilike, lte, gte, or, inArray } from 'drizzle-orm';
 import { ApiResponse } from '../models';
 import { TRANSACTION_TYPE_OPTIONS, TRANSACTION_TYPES } from '../constants/transactionTypes';
 
@@ -28,6 +28,7 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
  */
 export const searchBikes = async (req: Request, res: Response) => {
   try {
+    const userId = req.user!.userId;
     const {
       brand,
       model,
@@ -41,35 +42,47 @@ export const searchBikes = async (req: Request, res: Response) => {
       limit = 10,
     } = req.query;
 
-    // Build filters array
-    const filters = [
-      eq(bikes.status, 'approved') // Only show approved bikes
-    ];
+    // Build status filter: Show approved bikes + reserved bikes if user is seller or buyer
+    const statusFilter = or(
+      eq(bikes.status, 'approved'),
+      // Seller can see their own reserved bikes
+      and(
+        eq(bikes.status, 'reserved'),
+        eq(bikes.sellerId, userId)
+      )
+    );
 
-    // Add optional filters
+    // Build optional filters
+    const optionalFilters = [];
+    
     if (brand) {
-      filters.push(ilike(bikes.brand, `%${brand}%`));
+      optionalFilters.push(ilike(bikes.brand, `%${brand}%`));
     }
 
     if (model) {
-      filters.push(ilike(bikes.model, `%${model}%`));
+      optionalFilters.push(ilike(bikes.model, `%${model}%`));
     }
 
     if (minPrice) {
-      filters.push(gte(bikes.price, parseFloat(minPrice as string)));
+      optionalFilters.push(gte(bikes.price, parseFloat(minPrice as string)));
     }
 
     if (maxPrice) {
-      filters.push(lte(bikes.price, parseFloat(maxPrice as string)));
+      optionalFilters.push(lte(bikes.price, parseFloat(maxPrice as string)));
     }
 
     if (condition) {
-      filters.push(eq(bikes.condition, condition as string));
+      optionalFilters.push(eq(bikes.condition, condition as string));
     }
 
     if (color) {
-      filters.push(ilike(bikes.color, `%${color}%`));
+      optionalFilters.push(ilike(bikes.color, `%${color}%`));
     }
+
+    // Combine all filters
+    const filters = optionalFilters.length > 0 
+      ? [statusFilter, ...optionalFilters]
+      : [statusFilter];
 
     // Determine sort field
     let sortField: any = bikes.createdAt;
@@ -87,22 +100,102 @@ export const searchBikes = async (req: Request, res: Response) => {
         sortField = bikes.createdAt;
     }
 
+    // Get buyer's reserved bike IDs (direct from bikes table)
+    // First, get ALL reserved bikes to check against
+    const allReservedBikes = await db.query.bikes.findMany({
+      where: eq(bikes.status, 'reserved'),
+      columns: { id: true }
+    });
+    console.log('[Search] All reserved bikes:', allReservedBikes.length);
+
+    // From those reserved bikes, get IDs where user has a completed deposit
+    const myReservedBikeIds = [];
+    if (allReservedBikes.length > 0) {
+      const reservedBikeIds = allReservedBikes.map(b => b.id);
+      console.log('[Search] Reserved bike IDs to check:', reservedBikeIds);
+      
+      const myDeposits = await db.query.transactions.findMany({
+        where: and(
+          eq(transactions.buyerId, userId),
+          eq(transactions.transactionType, 'deposit'),
+          eq(transactions.status, 'completed'),
+          inArray(transactions.bikeId, reservedBikeIds)
+        ),
+        columns: { bikeId: true }
+      });
+      console.log('[Search] My completed deposits:', myDeposits.length);
+      console.log('[Search] My deposit bike IDs:', myDeposits.map(t => t.bikeId));
+      
+      myReservedBikeIds.push(...myDeposits.map(t => t.bikeId));
+    }
+
+    // Build status filter with simpler logic
+    // Approved bikes: everyone sees
+    // Reserved bikes: only seller + only buyer who deposited
+    
+    console.log('[Search] Building filter for userId:', userId);
+    
+    // This is what we want to show:
+    // 1. All approved bikes
+    // 2. Reserved bikes WHERE (seller = me OR buyer has my deposit)
+    
+    const statusFilterParts: any[] = [
+      eq(bikes.status, 'approved') // Public approved bikes
+    ];
+    
+    // Add seller's reserved bikes
+    const sellerReservedFilter = and(
+      eq(bikes.status, 'reserved'),
+      eq(bikes.sellerId, userId)
+    );
+    if (sellerReservedFilter) {
+      statusFilterParts.push(sellerReservedFilter);
+    }
+    
+    // Add buyer's reserved bikes (those with my deposits)
+    if (myReservedBikeIds.length > 0) {
+      console.log('[Search] Adding my reserved bikes:', myReservedBikeIds);
+      const buyerReservedFilter = and(
+        eq(bikes.status, 'reserved'),
+        inArray(bikes.id, myReservedBikeIds)
+      );
+      if (buyerReservedFilter) {
+        statusFilterParts.push(buyerReservedFilter);
+      }
+    }
+
+    const finalStatusFilter = or(...statusFilterParts.filter(Boolean));
+    console.log('[Search] Status filter parts:', statusFilterParts.length);
+
+    // Combine with optional filters (brand, model, price, etc.)
+    const finalFilters = optionalFilters.length > 0 
+      ? [finalStatusFilter, ...optionalFilters]
+      : [finalStatusFilter];
+    console.log('[Search] Final filters count:', finalFilters.length);
+
     // Calculate offset for pagination
     const pageNum = parseInt(page as string) || 1;
     const limitNum = parseInt(limit as string) || 10;
     const offset = (pageNum - 1) * limitNum;
 
+    console.log('[Search] Final filters - Show:', {
+      approved: 'ALL approved bikes',
+      myReservedAsOwner: `IF sellerId = ${userId}`,
+      myReservedAsDepositBuyer: myReservedBikeIds.length > 0 ? myReservedBikeIds : 'NONE',
+    });
+
     // Fetch total count
     const countResult = await db
       .select({ count: bikes.id })
       .from(bikes)
-      .where(and(...filters));
+      .where(and(...finalFilters));
 
     const total = countResult.length;
+    console.log('[Search] Total bikes matching filter:', total);
 
     // Fetch bikes with minimal info for list view
     const bikesData = await db.query.bikes.findMany({
-      where: and(...filters),
+      where: and(...finalFilters),
       with: {
         seller: {
           columns: {
@@ -301,7 +394,7 @@ export const createTransaction = async (req: Request, res: Response) => {
         });
       }
       transactionAmount = bike.price;
-      remainingBalance = null;
+      remainingBalance = 0;
     } else {
       // Deposit: amount must be between 10% - 30% of bike price
       if (!amount || amount <= 0) {

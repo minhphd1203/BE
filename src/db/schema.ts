@@ -38,7 +38,7 @@ export const bikes = pgTable('bikes', {
   color: varchar('color', { length: 50 }),
   images: text('images').array().notNull().default([]),
   video: text('video'), // optional video URL
-  status: varchar('status', { length: 50 }).notNull().default('pending'), // pending, approved, rejected, hidden, sold
+  status: varchar('status', { length: 50 }).notNull().default('pending'), // pending, approved, rejected, hidden, reserved, sold
   isVerified: varchar('is_verified', { length: 20 }).default('not_verified'), // not_verified, verified, failed
   inspectionStatus: varchar('inspection_status', { length: 50 }).default('pending'), // pending, in_progress, completed
   categoryId: uuid('category_id').references(() => categories.id),

@@ -1,5 +1,5 @@
 import express from 'express';
-import { upgradeToSeller, downgradeFromSeller, getProfile } from '../controllers/profileController';
+import { upgradeToSeller, downgradeFromSeller, getProfile, getOtherProfile } from '../controllers/profileController';
 import { isAuthenticated } from '../middleware/authMiddleware';
 
 const router = express.Router();
@@ -167,5 +167,65 @@ router.post('/v1/upgrade-seller', upgradeToSeller);
  *         description: Server error
  */
 router.post('/v1/downgrade-seller', downgradeFromSeller);
+
+/**
+ * @swagger
+ * /api/profile/v1/{userId}:
+ *   get:
+ *     summary: View another user's profile (buyer/seller only)
+ *     tags: [Profile]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: userId
+ *         in: path
+ *         required: true
+ *         description: ID of the user profile to view
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     description: "View public profile of another buyer or seller. Returns limited info (excludes email, phone for privacy). Cannot view inspector or admin profiles."
+ *     responses:
+ *       200:
+ *         description: Profile fetched successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id:
+ *                       type: string
+ *                       format: uuid
+ *                     name:
+ *                       type: string
+ *                     avatar:
+ *                       type: string
+ *                     role:
+ *                       type: string
+ *                       enum: [buyer, seller]
+ *                     createdAt:
+ *                       type: string
+ *                       format: date-time
+ *                     updatedAt:
+ *                       type: string
+ *                       format: date-time
+ *                 message:
+ *                   type: string
+ *       401:
+ *         description: Unauthorized - No token provided
+ *       403:
+ *         description: Access denied - Cannot view inspector or admin profiles
+ *       404:
+ *         description: User not found
+ *       500:
+ *         description: Server error
+ */
+router.get('/v1/:userId', getOtherProfile);
 
 export default router;
