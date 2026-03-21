@@ -44,6 +44,7 @@ export const getDashboard = async (req: Request, res: Response) => {
     const transactionStats = {
       total: allTransactions.length,
       pending: allTransactions.filter((t) => t.status === 'pending').length,
+      approved: allTransactions.filter((t) => t.status === 'approved').length,
       completed: allTransactions.filter((t) => t.status === 'completed').length,
       cancelled: allTransactions.filter((t) => t.status === 'cancelled').length,
       totalRevenue: allTransactions
@@ -466,6 +467,15 @@ export const toggleBikeVisibility = async (req: Request, res: Response) => {
  * DELETE /api/seller/v1/bikes/:id
  * Xóa tin đăng. Không thể xóa nếu có giao dịch đang pending.
  */
+/**
+ * DELETE /api/seller/v1/bikes/:id
+ * Seller deletes their bike listing
+ * SAFEGUARDS: Only allows deletion of pending or rejected bikes
+ * - Cannot delete approved/public bikes (buyers might have interest)
+ * - Cannot delete sold bikes
+ * - Cannot delete reserved bikes
+ * - Cannot delete bikes with active pending transactions
+ */
 export const deleteBike = async (req: Request, res: Response) => {
   try {
     const sellerId = req.user!.userId;
@@ -483,10 +493,15 @@ export const deleteBike = async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Không tìm thấy tin đăng hoặc bạn không sở hữu tin này' });
     }
 
-    if (existingBike.status === 'sold') {
-      return res.status(400).json({ success: false, message: 'Không thể xóa tin đã bán' });
+    // RESTRICTION: Only allow deletion of pending and rejected bikes
+    if (!['pending', 'rejected'].includes(existingBike.status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Không thể xóa tin đăng ở trạng thái '${existingBike.status}'. Chỉ có thể xóa những tin ở trạng thái 'pending' hoặc 'rejected'.`,
+      });
     }
 
+    // Additional safety check: prevent deletion if there are active pending transactions
     const activeTransactions = await db
       .select({ id: transactions.id })
       .from(transactions)
@@ -506,6 +521,63 @@ export const deleteBike = async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       message: 'Lỗi khi xóa tin đăng',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
+ * POST /api/seller/v1/bikes/:id/resubmit
+ * Seller resubmit rejected bike (failed inspector verification)
+ * After fixing the bike info, seller can resubmit to inspection queue
+ * Changes status from "rejected" back to "pending" and inspectionStatus to "pending"
+ */
+export const resubmitBike = async (req: Request, res: Response) => {
+  try {
+    const sellerId = req.user!.userId;
+    const { id } = req.params as { id: string };
+
+    if (!UUID_REGEX.test(id)) {
+      return res.status(400).json({ success: false, message: 'ID xe không đúng định dạng' });
+    }
+
+    const existingBike = await db.query.bikes.findFirst({
+      where: and(eq(bikes.id, id), eq(bikes.sellerId, sellerId)),
+    });
+
+    if (!existingBike) {
+      return res.status(404).json({ success: false, message: 'Không tìm thấy tin đăng hoặc bạn không sở hữu tin này' });
+    }
+
+    // Can only resubmit if bike is in rejected state (failed inspection)
+    if (existingBike.status !== 'rejected') {
+      return res.status(400).json({
+        success: false,
+        message: `Chỉ có thể resubmit xe bị rejected. Trạng thái hiện tại: ${existingBike.status}`,
+      });
+    }
+
+    // Reset bike to pending inspection
+    const [updatedBike] = await db
+      .update(bikes)
+      .set({
+        status: 'pending',
+        inspectionStatus: 'pending',
+        isVerified: 'not_verified',
+        updatedAt: new Date(),
+      })
+      .where(and(eq(bikes.id, id), eq(bikes.sellerId, sellerId)))
+      .returning();
+
+    res.status(200).json({
+      success: true,
+      data: updatedBike,
+      message: 'Xe đã được gửi lại kiểm định. Inspector sẽ review lại các thông tin bạn cập nhật.',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi khi gửi lại xe kiểm định',
       error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
@@ -574,9 +646,22 @@ export const getMyTransactions = async (req: Request, res: Response) => {
 
 /**
  * PUT /api/seller/v1/transactions/:id
- * Seller xác nhận hoặc hủy đơn đặt mua từ buyer.
- * - completed: xác nhận bán thành công (bike → sold)
- * - cancelled: hủy giao dịch
+ * Seller cập nhật trạng thái giao dịch trong workflow phê duyệt & thanh toán.
+ * 
+ * Trạng thái được phép:
+ * - approved: Phê duyệt giao dịch pending (pending → approved)
+ *             Sau khi phê duyệt, buyer mới có thể thanh toán
+ * - cancelled: Hủy giao dịch (pending hoặc approved → cancelled)
+ *
+ * LƯU Ý: Seller KHÔNG thể đặt status = completed. 
+ * Trạng thái completed chỉ được đặt bởi Payment Controller (IPN handler)
+ * khi buyer hoàn tất thanh toán qua VNPay.
+ *
+ * Workflow:
+ * 1. Buyer tạo transaction → pending
+ * 2. Seller phê duyệt → approved (endpoint này với status: approved)
+ * 3. Buyer thanh toán VNPay → completed (Payment Controller IPN handler tự động set)
+ *    OR Seller/Buyer hủy trước khi thanh toán → cancelled
  */
 export const updateTransactionStatus = async (req: Request, res: Response) => {
   try {
@@ -588,10 +673,11 @@ export const updateTransactionStatus = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'ID giao dịch không đúng định dạng' });
     }
 
-    if (!status || !['completed', 'cancelled'].includes(status)) {
+    if (!status || !['approved', 'cancelled'].includes(status)) {
       return res.status(400).json({
         success: false,
-        message: 'Trạng thái không hợp lệ. Seller có thể cập nhật: completed hoặc cancelled',
+        message: 'Trạng thái không hợp lệ. Seller chỉ có thể: approved (phê duyệt) hoặc cancelled (hủy)',
+        allowedStatuses: ['approved', 'cancelled']
       });
     }
 
@@ -603,11 +689,23 @@ export const updateTransactionStatus = async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Không tìm thấy giao dịch' });
     }
 
-    if (existingTransaction.status !== 'pending') {
-      return res.status(400).json({
-        success: false,
-        message: `Không thể cập nhật giao dịch đã ở trạng thái: ${existingTransaction.status}`,
-      });
+    // Validate state transitions
+    if (status === 'approved') {
+      // Only can approve from pending
+      if (existingTransaction.status !== 'pending') {
+        return res.status(400).json({
+          success: false,
+          message: `Giao dịch phải ở trạng thái 'pending' để phê duyệt (hiện tại: ${existingTransaction.status})`,
+        });
+      }
+    } else if (status === 'cancelled') {
+      // Can cancel from pending or approved (before payment completes)
+      if (!['pending', 'approved'].includes(existingTransaction.status)) {
+        return res.status(400).json({
+          success: false,
+          message: `Không thể hủy giao dịch ở trạng thái: ${existingTransaction.status}. Chỉ có thể hủy từ pending hoặc approved.`,
+        });
+      }
     }
 
     const updateData: Record<string, any> = { status };
@@ -619,15 +717,17 @@ export const updateTransactionStatus = async (req: Request, res: Response) => {
       .where(and(eq(transactions.id, id), eq(transactions.sellerId, sellerId)))
       .returning();
 
-    // Nếu hoàn tất giao dịch → đánh dấu xe là đã bán
-    if (status === 'completed') {
-      await db.update(bikes).set({ status: 'sold' }).where(eq(bikes.id, existingTransaction.bikeId));
+    let message = '';
+    if (status === 'approved') {
+      message = 'Giao dịch đã được phê duyệt. Buyer có thể tiến hành thanh toán.';
+    } else {
+      message = 'Giao dịch đã bị hủy';
     }
 
     res.status(200).json({
       success: true,
       data: updatedTransaction,
-      message: status === 'completed' ? 'Giao dịch đã hoàn tất, xe đã được đánh dấu là đã bán' : 'Giao dịch đã bị hủy',
+      message,
     });
   } catch (error) {
     res.status(500).json({

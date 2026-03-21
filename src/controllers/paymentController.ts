@@ -71,10 +71,10 @@ export const createPaymentUrl = async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Không tìm thấy giao dịch' });
     }
 
-    if (transaction.status !== 'pending') {
+    if (transaction.status !== 'approved') {
       return res.status(400).json({
         success: false,
-        message: `Giao dịch không ở trạng thái pending (hiện tại: ${transaction.status})`,
+        message: `Giao dịch phải được seller phê duyệt trước (hiện tại: ${transaction.status}). Hãy chờ seller phê duyệt đơn hàng.`,
       });
     }
 

@@ -7,6 +7,7 @@ import {
   updateBike,
   toggleBikeVisibility,
   deleteBike,
+  resubmitBike,
   getMyTransactions,
   updateTransactionStatus,
   getConversations,
@@ -298,6 +299,35 @@ router.put('/v1/bikes/:id/visibility', toggleBikeVisibility);
  *         description: Unauthorized
  */
 router.delete('/v1/bikes/:id', deleteBike);
+
+/**
+ * @swagger
+ * /api/seller/v1/bikes/{id}/resubmit:
+ *   post:
+ *     summary: Gửi lại xe kiểm định
+ *     description: Chỉ có thể resubmit nếu xe bị rejected. Seller cập nhật thông tin xe rồi gọi endpoint này để gửi lại kiểm định
+ *     tags: [Seller]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: ID xe cần resubmit
+ *     responses:
+ *       200:
+ *         description: Xe đã gửi lại kiểm định
+ *       400:
+ *         description: Xe không ở trạng thái rejected
+ *       404:
+ *         description: Không tìm thấy xe
+ *       401:
+ *         description: Unauthorized
+ */
+router.post('/v1/bikes/:id/resubmit', resubmitBike);
 
 // ============= TRANSACTIONS =============
 

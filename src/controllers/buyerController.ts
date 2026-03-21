@@ -454,8 +454,8 @@ export const createTransaction = async (req: Request, res: Response) => {
       success: true,
       data: newTransaction,
       message: transactionType === TRANSACTION_TYPES.FULL_PAYMENT 
-        ? 'Thanh toán đầy đủ thành công. Đang chờ seller xác nhận.'
-        : 'Đặt cọc thành công. Bạn có ưu tiên mua xe này.',
+        ? 'Tạo đơn giao dịch đầy đủ thành công. Đang chờ seller xác nhận để thanh toán.'
+        : 'Tạo đơn đặt cọc thành công. Đang chờ seller xác nhận để thanh toán.',
     });
   } catch (error) {
     res.status(500).json({
@@ -517,7 +517,7 @@ export const getMyTransactions = async (req: Request, res: Response) => {
 
 /**
  * DELETE /api/buyer/v1/transactions/:id
- * Buyer hủy đơn đặt mua (chỉ khi còn pending).
+ * Buyer hủy đơn đặt mua (chỉ khi còn pending hoặc approved, trước khi hoàn tất thanh toán).
  */
 export const cancelTransaction = async (req: Request, res: Response) => {
   try {
@@ -536,10 +536,11 @@ export const cancelTransaction = async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Không tìm thấy giao dịch' });
     }
 
-    if (existingTransaction.status !== 'pending') {
+    // Buyer chỉ có thể hủy giao dịch từ pending (chưa phê duyệt) hoặc approved (chờ thanh toán)
+    if (!['pending', 'approved'].includes(existingTransaction.status)) {
       return res.status(400).json({
         success: false,
-        message: `Không thể hủy giao dịch ở trạng thái: ${existingTransaction.status}`,
+        message: `Không thể hủy giao dịch ở trạng thái '${existingTransaction.status}'. Chỉ có thể hủy trước khi thanh toán hoàn tất.`,
       });
     }
 
@@ -734,43 +735,51 @@ export const submitReport = async (req: Request, res: Response) => {
 /**
  * POST /api/buyer/v1/reviews
  * Buyer đánh giá seller sau khi giao dịch hoàn tất.
+ * CONSTRAINT: Buyer must provide a specific completed transaction ID to rate
  */
 export const addReview = async (req: Request, res: Response) => {
   try {
     const reviewerId = req.user!.userId;
     const { sellerId, transactionId, rating, comment } = req.body;
 
-    if (!sellerId || !rating) {
-      return res.status(400).json({ success: false, message: 'Thiếu thông tin bắt buộc: sellerId, rating' });
+    if (!sellerId) {
+      return res.status(400).json({ success: false, message: 'Thiếu thông tin bắt buộc: sellerId' });
+    }
+    if (!transactionId) {
+      return res.status(400).json({ success: false, message: 'Thiếu thông tin bắt buộc: transactionId (Bạn phải chọn một giao dịch để đánh giá)' });
+    }
+    if (!rating && rating !== 0) {
+      return res.status(400).json({ success: false, message: 'Thiếu thông tin bắt buộc: rating' });
     }
 
     if (rating < 1 || rating > 5) {
       return res.status(400).json({ success: false, message: 'Rating phải từ 1 đến 5' });
     }
 
-    if (transactionId) {
-      const tx = await db.query.transactions.findFirst({
-        where: and(
-          eq(transactions.id, transactionId),
-          eq(transactions.buyerId, reviewerId),
-          eq(transactions.status, 'completed')
-        ),
+    // CONSTRAINT: Validate that the transaction exists, is completed, and belongs to this buyer and seller
+    const tx = await db.query.transactions.findFirst({
+      where: and(
+        eq(transactions.id, transactionId),
+        eq(transactions.buyerId, reviewerId),
+        eq(transactions.sellerId, sellerId),
+        eq(transactions.status, 'completed')
+      ),
+    });
+
+    if (!tx) {
+      return res.status(403).json({
+        success: false,
+        message: 'Giao dịch không tồn tại, chưa hoàn tất, hoặc không thuộc về bạn và seller này. Bạn chỉ có thể đánh giá seller sau khi giao dịch hoàn tất.',
       });
+    }
 
-      if (!tx) {
-        return res.status(400).json({
-          success: false,
-          message: 'Giao dịch không tồn tại, chưa hoàn tất, hoặc không thuộc về bạn',
-        });
-      }
+    // Check if already reviewed this transaction
+    const existingReview = await db.query.reviews.findFirst({
+      where: and(eq(reviews.transactionId, transactionId), eq(reviews.reviewerId, reviewerId)),
+    });
 
-      const existingReview = await db.query.reviews.findFirst({
-        where: and(eq(reviews.transactionId, transactionId), eq(reviews.reviewerId, reviewerId)),
-      });
-
-      if (existingReview) {
-        return res.status(400).json({ success: false, message: 'Bạn đã đánh giá giao dịch này rồi' });
-      }
+    if (existingReview) {
+      return res.status(400).json({ success: false, message: 'Bạn đã đánh giá giao dịch này rồi' });
     }
 
     const [newReview] = await db
@@ -778,7 +787,7 @@ export const addReview = async (req: Request, res: Response) => {
       .values({
         reviewerId,
         sellerId,
-        transactionId: transactionId || null,
+        transactionId: transactionId,
         rating: parseInt(rating),
         comment: comment || null,
       })

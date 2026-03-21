@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { db } from '../db';
 import { bikes, users, transactions, reports, categories } from '../db/schema';
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, and } from 'drizzle-orm';
 import { UserPublic, ApiResponse } from '../models';
 
 // ============= QUẢN LÝ XE ĐẠP =============
@@ -39,104 +39,208 @@ export const getAllBikes = async (req: Request, res: Response) => {
   }
 };
 
-// Duyệt tin đăng xe đạp
+/**
+ * PUT /api/admin/v1/bike/:id/approve
+ * Admin approves bike (OLD ENDPOINT - updated to require inspector verification)
+ * Now checks if bike passed inspector verification (isVerified: verified)
+ * before allowing approval
+ */
 export const approveBike = async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
-    
+
+    // Fetch bike to check verification status
+    const [bike] = await db.select().from(bikes).where(eq(bikes.id, id));
+
+    if (!bike) {
+      return res.status(404).json({
+        success: false,
+        message: 'Bike not found',
+      });
+    }
+
+    // Only allow approval if bike passed inspector verification
+    if (bike.isVerified !== 'verified') {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot approve. Bike verification status: ${bike.isVerified}. Must be 'verified' by inspector first.`,
+      });
+    }
+
+    // Status should be pending (waiting for admin approval)
+    if (bike.status !== 'pending') {
+      return res.status(400).json({
+        success: false,
+        message: `Bike is in ${bike.status} status. Cannot approve bikes that are not pending.`,
+      });
+    }
+
     const [updatedBike] = await db
       .update(bikes)
       .set({ status: 'approved', updatedAt: new Date() })
       .where(eq(bikes.id, id))
       .returning();
 
-    if (!updatedBike) {
-      return res.status(404).json({
-        success: false,
-        message: 'Bike not found'
-      });
-    }
-
     const response: ApiResponse = {
       success: true,
       data: updatedBike,
-      message: 'Bike approved successfully'
+      message: 'Bike approved successfully! Now visible to public.',
     };
-    
+
     res.status(200).json(response);
   } catch (error) {
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Error approving bike', 
-      error: error instanceof Error ? error.message : 'Unknown error'
+      message: 'Error approving bike',
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 };
 
-// Từ chối tin đăng xe đạp
+/**
+ * PUT /api/admin/v1/bike/:id/reject
+ * Admin rejects bike (OLD ENDPOINT - updated to require inspector verification)
+ * Now checks if bike passed inspector verification (isVerified: verified)
+ * before allowing rejection for business reasons
+ */
 export const rejectBike = async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
-    const { reason } = req.body; // Lý do từ chối (optional)
-    
+    const { reason } = req.body; // Optional rejection reason
+
+    // Fetch bike to check verification status
+    const [bike] = await db.select().from(bikes).where(eq(bikes.id, id));
+
+    if (!bike) {
+      return res.status(404).json({
+        success: false,
+        message: 'Bike not found',
+      });
+    }
+
+    // Only allow rejection of verified bikes (inspector already passed it)
+    if (bike.isVerified !== 'verified') {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot reject. Bike verification status: ${bike.isVerified}. Only 'verified' bikes can be rejected by admin.`,
+      });
+    }
+
+    // Status should be pending (waiting for admin decision)
+    if (bike.status !== 'pending') {
+      return res.status(400).json({
+        success: false,
+        message: `Bike is in ${bike.status} status. Cannot reject bikes that are not pending.`,
+      });
+    }
+
     const [updatedBike] = await db
       .update(bikes)
       .set({ status: 'rejected', updatedAt: new Date() })
       .where(eq(bikes.id, id))
       .returning();
 
-    if (!updatedBike) {
-      return res.status(404).json({
-        success: false,
-        message: 'Bike not found'
-      });
-    }
-
     const response: ApiResponse = {
       success: true,
       data: { ...updatedBike, rejectionReason: reason },
-      message: 'Bike rejected successfully'
+      message: 'Bike rejected. Seller must fix issues and resubmit.',
     };
-    
+
     res.status(200).json(response);
   } catch (error) {
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Error rejecting bike', 
-      error: error instanceof Error ? error.message : 'Unknown error'
+      message: 'Error rejecting bike',
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 };
 
-// Xóa tin đăng xe đạp
-export const deleteBike = async (req: Request, res: Response) => {
+/**
+ * GET /api/admin/v1/bikes/pending-approval
+ * Get list of bikes waiting for admin approval
+ * Shows only bikes that passed inspector verification (isVerified: verified, status: pending)
+ */
+export const getPendingApprovalBikes = async (req: Request, res: Response) => {
   try {
-    const id = req.params.id as string;
-    
-    const [deletedBike] = await db
-      .delete(bikes)
-      .where(eq(bikes.id, id))
-      .returning();
+    const { page = 1, limit = 10, search } = req.query;
 
-    if (!deletedBike) {
-      return res.status(404).json({
-        success: false,
-        message: 'Bike not found'
-      });
-    }
+    const pageNum = parseInt(page as string) || 1;
+    const limitNum = parseInt(limit as string) || 10;
+    const offset = (pageNum - 1) * limitNum;
+
+    // Build filters for verified bikes pending approval
+    let countQuery = db
+      .select({ id: bikes.id })
+      .from(bikes)
+      .where(
+        and(
+          eq(bikes.isVerified, 'verified'),
+          eq(bikes.status, 'pending'),
+          eq(bikes.inspectionStatus, 'completed')
+        )
+      );
+
+    let dataQuery = db.query.bikes.findMany({
+      where: and(
+        eq(bikes.isVerified, 'verified'),
+        eq(bikes.status, 'pending'),
+        eq(bikes.inspectionStatus, 'completed')
+      ),
+      with: {
+        seller: {
+          columns: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+          },
+        },
+        inspections: {
+          columns: {
+            id: true,
+            status: true,
+            overallCondition: true,
+            frameCondition: true,
+            brakeCondition: true,
+            drivetrainCondition: true,
+            wheelCondition: true,
+            inspectionNote: true,
+            recommendation: true,
+            createdAt: true,
+          },
+          orderBy: [desc(bikes.createdAt)],
+        },
+      },
+      orderBy: [desc(bikes.createdAt)],
+    });
+
+    const countResult = await countQuery;
+    const total = countResult.length;
+
+    const pendingBikes = await dataQuery;
+
+    // Apply pagination manually since we're using query builder
+    const paginatedData = pendingBikes.slice(offset, offset + limitNum);
 
     const response: ApiResponse = {
       success: true,
-      data: deletedBike,
-      message: 'Bike deleted successfully'
+      data: paginatedData,
+      message: `Found ${paginatedData.length} bikes pending admin approval`,
+      meta: {
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(total / limitNum),
+      },
     };
-    
+
     res.status(200).json(response);
   } catch (error) {
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Error deleting bike', 
-      error: error instanceof Error ? error.message : 'Unknown error'
+      message: 'Error fetching pending approval bikes',
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 };

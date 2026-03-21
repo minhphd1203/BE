@@ -197,11 +197,29 @@ export const getBikeDetail = async (req: Request, res: Response) => {
       .where(eq(inspections.bikeId, bikeId as string))
       .orderBy(desc(inspections.createdAt));
 
+    // Get latest inspection for prefilling (on resubmission)
+    // If bike was resubmitted, inspector can see what failed before and what needs fixing
+    const latestInspection = inspectionHistory.length > 0 ? inspectionHistory[0] : null;
+
     res.json({
       success: true,
       data: {
         bike: bikeDetail,
         inspectionHistory,
+        // If this is a resubmitted bike, latestInspection shows PREVIOUS inspection findings
+        // Inspector can compare new condition vs previous findings to verify seller fixed issues
+        latestInspection: latestInspection ? {
+          inspectionId: latestInspection.id,
+          previousStatus: latestInspection.status, // 'passed' or 'failed'
+          frameCondition: latestInspection.frameCondition,
+          brakeCondition: latestInspection.brakeCondition,
+          drivetrainCondition: latestInspection.drivetrainCondition,
+          wheelCondition: latestInspection.wheelCondition,
+          overallCondition: latestInspection.overallCondition,
+          inspectionNote: latestInspection.inspectionNote,
+          recommendation: latestInspection.recommendation,
+          inspectedAt: latestInspection.createdAt,
+        } : null,
       },
     });
   } catch (error) {
@@ -260,6 +278,22 @@ export const startInspection = async (req: Request, res: Response) => {
 };
 
 // ✅ 5. HOÀN TẤT KIỂM ĐỊNH (Submit form kiểm định)
+/**
+ * Workflow:
+ * - If inspection PASSED: isVerified=verified, keep status=pending (await admin approval)
+ * - If inspection FAILED: isVerified=failed, auto-set status=rejected (no admin needed)
+ *
+ * RESUBMISSION AUTO-FILL:
+ * - Inspector's findings reflect ACTUAL bike reality, which doesn't change just because seller corrected info
+ * - On resubmit: condition fields AUTO-FILL from previous inspection by default
+ * - Inspector only needs to change status (pass ↔ fail), doesn't need to re-enter all conditions
+ * - Inspector CAN override values if they notice something different on re-inspection
+ * 
+ * Example:
+ * - First inspection: frameCondition = "poor" (that's what inspector saw)
+ * - Seller corrects listing to match inspector's findings (stops claiming "excellent")
+ * - Resubmit: frameCondition auto-fills as "poor" (same reality) - inspector only sets status
+ */
 export const submitInspection = async (req: Request, res: Response) => {
   try {
     const bikeId = req.params.bikeId as string;
@@ -284,6 +318,72 @@ export const submitInspection = async (req: Request, res: Response) => {
       });
     }
 
+    // PREVENT DUPLICATE SUBMISSIONS: Check if bike already has a completed inspection in this cycle
+    if (bike.inspectionStatus === 'completed') {
+      return res.status(400).json({
+        success: false,
+        message: 'This bike already has a completed inspection. Cannot submit duplicate inspection. Awaiting admin action or seller resubmit.',
+      });
+    }
+
+    // Get previous inspection (if resubmitted) to auto-fill all fields
+    // Inspector's findings reflect ACTUAL bike condition, which doesn't change just because seller corrected info
+    const [previousInspection] = await db
+      .select()
+      .from(inspections)
+      .where(eq(inspections.bikeId, bikeId as string))
+      .orderBy(desc(inspections.createdAt))
+      .limit(1);
+
+    // On resubmit: LOCK condition fields - inspector cannot change them
+    // These fields represent actual bike reality, which doesn't change
+    if (previousInspection) {
+      // Resubmission detected - validate that condition fields are NOT being changed
+      if (inspectionData.frameCondition !== undefined && inspectionData.frameCondition !== previousInspection.frameCondition) {
+        return res.status(400).json({
+          success: false,
+          message: `frameCondition is locked on resubmit. Cannot change from "${previousInspection.frameCondition}" to "${inspectionData.frameCondition}". Only status can change.`,
+        });
+      }
+      if (inspectionData.brakeCondition !== undefined && inspectionData.brakeCondition !== previousInspection.brakeCondition) {
+        return res.status(400).json({
+          success: false,
+          message: `brakeCondition is locked on resubmit. Cannot change from "${previousInspection.brakeCondition}" to "${inspectionData.brakeCondition}". Only status can change.`,
+        });
+      }
+      if (inspectionData.drivetrainCondition !== undefined && inspectionData.drivetrainCondition !== previousInspection.drivetrainCondition) {
+        return res.status(400).json({
+          success: false,
+          message: `drivetrainCondition is locked on resubmit. Cannot change from "${previousInspection.drivetrainCondition}" to "${inspectionData.drivetrainCondition}". Only status can change.`,
+        });
+      }
+      if (inspectionData.wheelCondition !== undefined && inspectionData.wheelCondition !== previousInspection.wheelCondition) {
+        return res.status(400).json({
+          success: false,
+          message: `wheelCondition is locked on resubmit. Cannot change from "${previousInspection.wheelCondition}" to "${inspectionData.wheelCondition}". Only status can change.`,
+        });
+      }
+      if (inspectionData.overallCondition !== undefined && inspectionData.overallCondition !== previousInspection.overallCondition) {
+        return res.status(400).json({
+          success: false,
+          message: `overallCondition is locked on resubmit. Cannot change from "${previousInspection.overallCondition}" to "${inspectionData.overallCondition}". Only status can change.`,
+        });
+      }
+    }
+
+    // Build inspection data with auto-fill from previous inspection
+    const finalInspectionData = {
+      frameCondition: inspectionData.frameCondition ?? previousInspection?.frameCondition,
+      brakeCondition: inspectionData.brakeCondition ?? previousInspection?.brakeCondition,
+      drivetrainCondition: inspectionData.drivetrainCondition ?? previousInspection?.drivetrainCondition,
+      wheelCondition: inspectionData.wheelCondition ?? previousInspection?.wheelCondition,
+      overallCondition: inspectionData.overallCondition ?? previousInspection?.overallCondition,
+      inspectionNote: inspectionData.inspectionNote ?? previousInspection?.inspectionNote,
+      recommendation: inspectionData.recommendation ?? previousInspection?.recommendation,
+      inspectionImages: inspectionData.inspectionImages ?? previousInspection?.inspectionImages ?? [],
+      reportFile: inspectionData.reportFile ?? previousInspection?.reportFile,
+    };
+
     // Tạo bản ghi inspection
     const [newInspection] = await db
       .insert(inspections)
@@ -291,34 +391,49 @@ export const submitInspection = async (req: Request, res: Response) => {
         bikeId: bikeId as string,
         inspectorId: inspectorId!,
         status: inspectionData.status,
-        overallCondition: inspectionData.overallCondition,
-        frameCondition: inspectionData.frameCondition,
-        brakeCondition: inspectionData.brakeCondition,
-        drivetrainCondition: inspectionData.drivetrainCondition,
-        wheelCondition: inspectionData.wheelCondition,
-        inspectionNote: inspectionData.inspectionNote,
-        recommendation: inspectionData.recommendation,
-        inspectionImages: inspectionData.inspectionImages || [],
-        reportFile: inspectionData.reportFile,
+        overallCondition: finalInspectionData.overallCondition,
+        frameCondition: finalInspectionData.frameCondition,
+        brakeCondition: finalInspectionData.brakeCondition,
+        drivetrainCondition: finalInspectionData.drivetrainCondition,
+        wheelCondition: finalInspectionData.wheelCondition,
+        inspectionNote: finalInspectionData.inspectionNote,
+        recommendation: finalInspectionData.recommendation,
+        inspectionImages: finalInspectionData.inspectionImages,
+        reportFile: finalInspectionData.reportFile,
       })
       .returning();
 
-    // Cập nhật trạng thái xe
-    const verificationStatus = inspectionData.status === 'passed' ? 'verified' : 'failed';
+    // Determine verification status and bike status based on inspection result
+    const isVerifiedStatus = inspectionData.status === 'passed' ? 'verified' : 'failed';
+    
+    // If FAILED: auto-set bike status to rejected (no admin approval needed)
+    // If PASSED: keep status as pending (waiting for admin approval)
+    const bikeStatus = inspectionData.status === 'failed' ? 'rejected' : 'pending';
 
+    // Update bike with verification result and status
     await db
       .update(bikes)
       .set({
-        isVerified: verificationStatus,
+        isVerified: isVerifiedStatus,
         inspectionStatus: 'completed',
+        status: bikeStatus,
         updatedAt: new Date(),
       })
       .where(eq(bikes.id, bikeId as string));
 
+    const message = inspectionData.status === 'passed'
+      ? previousInspection 
+        ? 'Resubmission inspection passed! Info now matches actual bike condition. Bike awaiting admin approval.'
+        : 'Inspection passed! Bike awaiting admin approval to go public.'
+      : previousInspection
+        ? 'Resubmission inspection failed. Bike condition still not acceptable. Seller must fix more and resubmit.'
+        : 'Inspection failed. Bike automatically rejected. Seller must fix and resubmit.';
+
     res.json({
       success: true,
       data: newInspection,
-      message: `Inspection completed. Bike status: ${verificationStatus}`,
+      message,
+      autoFilledFrom: previousInspection ? 'Previous inspection (condition remains same as reality)' : null,
     });
   } catch (error) {
     console.error('Submit inspection error:', error);
@@ -440,6 +555,30 @@ export const getInspectionDetail = async (req: Request, res: Response) => {
 };
 
 // 🔄 8. CẬP NHẬT BÁO CÁO KIỂM ĐỊNH (Nếu cần sửa)
+/**
+ * Used to FIX MISTAKES after submission (typos, misclicks, incorrect data entry)
+ * 
+ * Requirements to edit inspection - BOTH must be true:
+ * 1. Inspection belongs to current inspector
+ * 2. Bike has NOT been resubmitted yet (inspectionStatus must still be 'completed')
+ * 3. Bike has NOT been approved by admin yet (status must NOT be 'approved')
+ * 
+ * Status Change Behavior:
+ * - If updating inspection status from "passed" to "failed" → bike status changes "pending" → "rejected"
+ * - If updating inspection status from "failed" to "passed" → bike status changes "rejected" → "pending"
+ * - Only updating other fields (notes, condition) → bike status unchanged
+ * 
+ * Timeline:
+ * - First inspection submitted → inspectionStatus='completed' → CAN EDIT ✓
+ * - Admin approves bike → status='approved' → CANNOT EDIT ✗
+ * - OR Seller resubmits → inspectionStatus='pending' → CANNOT EDIT OLD INSPECTION ✗
+ *   (New inspection will be submitted for the new cycle)
+ * 
+ * Example scenarios:
+ * - Inspector accidentally submitted "failed" instead of "passed" - use this to fix (before seller resubmits)
+ * - Typo in inspection notes - fix it here (before seller resubmits)
+ * - Incorrectly filled condition field - correct it (before seller resubmits)
+ */
 export const updateInspection = async (req: Request, res: Response) => {
   try {
     const inspectionId = req.params.inspectionId as string;
@@ -466,6 +605,30 @@ export const updateInspection = async (req: Request, res: Response) => {
       });
     }
 
+    // PREVENT EDITING IF ADMIN ALREADY APPROVED: Get bike to check admin approval status
+    const [bike] = await db
+      .select()
+      .from(bikes)
+      .where(eq(bikes.id, inspection.bikeId));
+
+    if (bike?.status === 'approved') {
+      // Bike already approved by admin - cannot edit inspection anymore
+      return res.status(403).json({
+        success: false,
+        message: 'Cannot edit inspection - bike has already been approved by admin. Inspection is finalized.',
+      });
+    }
+
+    // PREVENT EDITING AFTER RESUBMISSION: Check if bike has been resubmitted
+    // When seller resubmits, inspectionStatus resets from 'completed' back to 'pending'
+    // This locks the old inspection from further edits
+    if (bike?.inspectionStatus !== 'completed') {
+      return res.status(403).json({
+        success: false,
+        message: 'Cannot edit inspection - bike inspection status does not allow editing at this time.',
+      });
+    }
+
     // Cập nhật
     const [updatedInspection] = await db
       .update(inspections)
@@ -476,10 +639,23 @@ export const updateInspection = async (req: Request, res: Response) => {
       .where(eq(inspections.id, inspectionId as string))
       .returning();
 
+    // If inspection status is being changed, update bike status accordingly
+    if (updateData.status) {
+      const newBikeStatus = updateData.status === 'failed' ? 'rejected' : 'pending';
+      await db
+        .update(bikes)
+        .set({
+          status: newBikeStatus,
+          isVerified: updateData.status === 'passed' ? 'verified' : 'failed',
+          updatedAt: new Date(),
+        })
+        .where(eq(bikes.id, inspection.bikeId));
+    }
+
     res.json({
       success: true,
       data: updatedInspection,
-      message: 'Inspection updated successfully',
+      message: 'Inspection updated successfully' + (updateData.status ? ` and bike status updated to ${updateData.status === 'failed' ? 'rejected' : 'pending'}` : ''),
     });
   } catch (error) {
     console.error('Update inspection error:', error);

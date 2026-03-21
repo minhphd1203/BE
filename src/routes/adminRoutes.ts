@@ -1,9 +1,9 @@
 import express from 'express';
 import { 
   getAllBikes, 
-  approveBike, 
-  rejectBike, 
-  deleteBike,
+  approveBike,
+  rejectBike,
+  getPendingApprovalBikes,
   getAllUser, 
   updateUser, 
   deleteUser,
@@ -59,6 +59,10 @@ router.get('/v1/bike', isAdmin, getAllBikes);
  * /api/admin/v1/bike/{bikeId}/approve:
  *   put:
  *     summary: Approve a bike for listing
+ *     description: |
+ *       Admin approves bike (must have inspector verification first)
+ *       Bike must have isVerified: verified and status: pending
+ *       Changes status from pending → approved (goes public)
  *     tags: [Admin - Bikes]
  *     security:
  *       - bearerAuth: []
@@ -75,7 +79,7 @@ router.get('/v1/bike', isAdmin, getAllBikes);
  *       404:
  *         description: Bike not found
  *       400:
- *         description: Bike already processed
+ *         description: Bike not verified by inspector or not pending
  */
 router.put('/v1/bike/:id/approve', isAdmin, approveBike);
 
@@ -84,6 +88,11 @@ router.put('/v1/bike/:id/approve', isAdmin, approveBike);
  * /api/admin/v1/bike/{bikeId}/reject:
  *   put:
  *     summary: Reject a bike listing
+ *     description: |
+ *       Admin rejects bike for business reasons (must have inspector verification first)
+ *       Bike must have isVerified: verified and status: pending
+ *       Changes status from pending → rejected
+ *       Seller must fix issues and resubmit
  *     tags: [Admin - Bikes]
  *     security:
  *       - bearerAuth: []
@@ -95,7 +104,7 @@ router.put('/v1/bike/:id/approve', isAdmin, approveBike);
  *           type: string
  *           format: uuid
  *     requestBody:
- *       required: true
+ *       required: false
  *       content:
  *         application/json:
  *           schema:
@@ -109,31 +118,61 @@ router.put('/v1/bike/:id/approve', isAdmin, approveBike);
  *         description: Bike rejected successfully
  *       404:
  *         description: Bike not found
+ *       400:
+ *         description: Bike not verified by inspector or not pending
  */
 router.put('/v1/bike/:id/reject', isAdmin, rejectBike);
 
 /**
  * @swagger
- * /api/admin/v1/bike/{bikeId}:
- *   delete:
- *     summary: Delete a bike listing
+ * /api/admin/v1/bikes/pending-approval:
+ *   get:
+ *     summary: Get all bikes pending admin approval
+ *     description: |
+ *       Retrieves bikes that have passed inspector verification and are waiting for admin approval/rejection
+ *       Filters for: isVerified=verified AND status=pending AND inspectionStatus=completed
+ *       Includes seller details and full inspection report for admin review
  *     tags: [Admin - Bikes]
  *     security:
  *       - bearerAuth: []
  *     parameters:
- *       - in: path
- *         name: bikeId
- *         required: true
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Page number for pagination
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: Items per page
+ *       - in: query
+ *         name: search
  *         schema:
  *           type: string
- *           format: uuid
+ *         description: Search by bike title or brand
  *     responses:
  *       200:
- *         description: Bike deleted successfully
- *       404:
- *         description: Bike not found
+ *         description: List of bikes pending approval with pagination
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 bikes:
+ *                   type: array
+ *                 totalCount:
+ *                   type: integer
+ *                 totalPages:
+ *                   type: integer
+ *                 currentPage:
+ *                   type: integer
+ *       401:
+ *         description: Unauthorized - Admin role required
  */
-router.delete('/v1/bike/:id', isAdmin, deleteBike);
+router.get('/v1/bikes/pending-approval', isAdmin, getPendingApprovalBikes);
 
 // ================== USER MANAGEMENT ==================
 
