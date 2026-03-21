@@ -2,14 +2,55 @@ import { Request, Response } from 'express';
 import { db } from '../db';
 import { bikes, transactions, messages, reviews, categories, users } from '../db/schema';
 import { desc, eq, and, or, like, asc } from 'drizzle-orm';
+import type { BikeListingFiles } from '../middleware/bikeUploadMiddleware';
+import {
+  collectImageUrlsFromRequest,
+  collectVideoUrlFromRequest,
+  normalizeImagesFromBody,
+} from '../middleware/bikeUploadMiddleware';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Parse mileage: 0 is valid; only null/undefined/'' → null */
-function parseMileage(value: unknown): number | null {
-  if (value === undefined || value === null || value === '') return null;
-  const n = parseInt(String(value), 10);
-  return Number.isNaN(n) ? null : n;
+const MAX_BIKE_YEAR = () => new Date().getFullYear() + 1;
+
+/** Năm SX: bắt buộc hợp lệ (multipart gửi string — tránh NaN xuống DB). */
+function parseBikeYear(value: unknown): { ok: true; value: number } | { ok: false; message: string } {
+  const n =
+    typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : parseInt(String(value).trim(), 10);
+  if (Number.isNaN(n)) {
+    return { ok: false, message: 'year phải là số nguyên hợp lệ (ví dụ 2022), không được để chữ.' };
+  }
+  const maxY = MAX_BIKE_YEAR();
+  if (n < 1900 || n > maxY) {
+    return { ok: false, message: `year phải từ 1900 đến ${maxY}.` };
+  }
+  return { ok: true, value: n };
+}
+
+function parseBikePrice(value: unknown): { ok: true; value: number } | { ok: false; message: string } {
+  const raw =
+    typeof value === 'number' && Number.isFinite(value)
+      ? value
+      : parseFloat(String(value).trim().replace(/\s/g, '').replace(/,/g, ''));
+  if (Number.isNaN(raw) || !Number.isFinite(raw)) {
+    return { ok: false, message: 'price phải là số hợp lệ (ví dụ 45000000).' };
+  }
+  if (raw < 0) {
+    return { ok: false, message: 'price không được âm.' };
+  }
+  return { ok: true, value: raw };
+}
+
+/** mileage: trống/null → null; có giá trị → số nguyên >= 0 */
+function parseBikeMileageField(value: unknown): { ok: true; value: number | null } | { ok: false; message: string } {
+  if (value === undefined || value === null || value === '') {
+    return { ok: true, value: null };
+  }
+  const n = parseInt(String(value).trim(), 10);
+  if (Number.isNaN(n) || n < 0) {
+    return { ok: false, message: 'mileage phải là số nguyên >= 0 hoặc để trống.' };
+  }
+  return { ok: true, value: n };
 }
 
 // ============= DASHBOARD =============
@@ -89,8 +130,10 @@ export const getDashboard = async (req: Request, res: Response) => {
 export const createBike = async (req: Request, res: Response) => {
   try {
     const sellerId = req.user!.userId;
-    const { title, description, brand, model, year, price, condition, mileage, color, images, video, categoryId } =
-      req.body;
+    const { title, description, brand, model, year, price, condition, mileage, color, categoryId } = req.body;
+    const images = collectImageUrlsFromRequest(req);
+    const videoRaw = collectVideoUrlFromRequest(req);
+    const video = videoRaw === undefined ? null : videoRaw;
 
     if (!title || !description || !brand || !model || !year || !price || !condition) {
       return res.status(400).json({
@@ -105,6 +148,19 @@ export const createBike = async (req: Request, res: Response) => {
         success: false,
         message: `Tình trạng xe không hợp lệ. Phải là một trong: ${validConditions.join(', ')}`,
       });
+    }
+
+    const yearParsed = parseBikeYear(year);
+    if (!yearParsed.ok) {
+      return res.status(400).json({ success: false, message: yearParsed.message });
+    }
+    const priceParsed = parseBikePrice(price);
+    if (!priceParsed.ok) {
+      return res.status(400).json({ success: false, message: priceParsed.message });
+    }
+    const mileageParsed = parseBikeMileageField(mileage);
+    if (!mileageParsed.ok) {
+      return res.status(400).json({ success: false, message: mileageParsed.message });
     }
 
     let finalCategoryId: string | null = null;
@@ -134,10 +190,10 @@ export const createBike = async (req: Request, res: Response) => {
         description,
         brand,
         model,
-        year: parseInt(year),
-        price: parseFloat(price),
+        year: yearParsed.value,
+        price: priceParsed.value,
         condition,
-        mileage: parseMileage(mileage),
+        mileage: mileageParsed.value,
         color: color || null,
         images: images || [],
         video: video || null,
@@ -338,16 +394,28 @@ export const updateBike = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Không thể chỉnh sửa tin đã bán' });
     }
 
-    const { title, description, brand, model, year, price, condition, mileage, color, images, video, categoryId } =
-      req.body;
+    const { title, description, brand, model, year, price, condition, mileage, color, categoryId } = req.body;
+    const files = req.files as BikeListingFiles | undefined;
 
     const updateData: Record<string, any> = {};
     if (title !== undefined) updateData.title = title;
     if (description !== undefined) updateData.description = description;
     if (brand !== undefined) updateData.brand = brand;
     if (model !== undefined) updateData.model = model;
-    if (year !== undefined) updateData.year = parseInt(year);
-    if (price !== undefined) updateData.price = parseFloat(price);
+    if (year !== undefined) {
+      const y = parseBikeYear(year);
+      if (!y.ok) {
+        return res.status(400).json({ success: false, message: y.message });
+      }
+      updateData.year = y.value;
+    }
+    if (price !== undefined) {
+      const p = parseBikePrice(price);
+      if (!p.ok) {
+        return res.status(400).json({ success: false, message: p.message });
+      }
+      updateData.price = p.value;
+    }
     if (condition !== undefined) {
       const validConditions = ['excellent', 'good', 'fair', 'poor'];
       if (!validConditions.includes(condition)) {
@@ -358,10 +426,25 @@ export const updateBike = async (req: Request, res: Response) => {
       }
       updateData.condition = condition;
     }
-    if (mileage !== undefined) updateData.mileage = parseMileage(mileage);
+    if (mileage !== undefined) {
+      const m = parseBikeMileageField(mileage);
+      if (!m.ok) {
+        return res.status(400).json({ success: false, message: m.message });
+      }
+      updateData.mileage = m.value;
+    }
     if (color !== undefined) updateData.color = color;
-    if (images !== undefined) updateData.images = images;
-    if (video !== undefined) updateData.video = video;
+    // Ảnh: upload file (multipart) hoặc mảng URL JSON; video: chỉ URL (body text / JSON)
+    if (files?.images && files.images.length > 0) {
+      updateData.images = collectImageUrlsFromRequest(req);
+    } else if (Object.prototype.hasOwnProperty.call(req.body, 'images')) {
+      const normalized = normalizeImagesFromBody(req.body as Record<string, unknown>);
+      if (normalized !== undefined) updateData.images = normalized;
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'video')) {
+      const v = collectVideoUrlFromRequest(req);
+      updateData.video = v === undefined ? null : v;
+    }
     if (categoryId !== undefined) {
       if (categoryId === null || categoryId === '') {
         updateData.categoryId = null;

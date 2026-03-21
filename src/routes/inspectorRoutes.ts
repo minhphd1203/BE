@@ -10,6 +10,10 @@ import {
   updateInspection
 } from '../controllers/inspectorController';
 import { isInspector } from '../middleware/authMiddleware';
+import {
+  parseInspectionSubmitMultipart,
+  parseInspectionUpdateMultipart,
+} from '../middleware/inspectionUploadMiddleware';
 
 const router = express.Router();
 
@@ -113,7 +117,31 @@ router.post('/v1/bikes/:bikeId/start', isInspector, startInspection);
  *           format: uuid
  *     requestBody:
  *       required: true
+ *       description: |
+ *         JSON hoặc multipart/form-data. Ảnh minh chứng kiểm định upload field **inspectionImages** (nhiều file);
+ *         có thể thêm URL trong body field inspectionImages (JSON string hoặc mảng).
  *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required: [status, overallCondition]
+ *             properties:
+ *               status: { type: string, enum: [passed, failed] }
+ *               overallCondition: { type: string, enum: [excellent, good, fair, poor] }
+ *               frameCondition: { type: string }
+ *               brakeCondition: { type: string }
+ *               drivetrainCondition: { type: string }
+ *               wheelCondition: { type: string }
+ *               inspectionNote: { type: string }
+ *               recommendation: { type: string }
+ *               reportFile: { type: string }
+ *               inspectionImages:
+ *                 type: string
+ *                 format: binary
+ *                 description: Ảnh minh chứng (jpeg/png/webp/gif), field name inspectionImages
+ *           encoding:
+ *             inspectionImages:
+ *               contentType: image/png, image/jpeg, image/webp, image/gif
  *         application/json:
  *           schema:
  *             type: object
@@ -146,7 +174,7 @@ router.post('/v1/bikes/:bikeId/start', isInspector, startInspection);
  *       404:
  *         description: Bike not found
  */
-router.post('/v1/bikes/:bikeId/inspect', isInspector, submitInspection);
+router.post('/v1/bikes/:bikeId/inspect', isInspector, parseInspectionSubmitMultipart, submitInspection);
 
 /**
  * @swagger
@@ -218,23 +246,52 @@ router.get('/v1/inspections/:inspectionId', isInspector, getInspectionDetail);
  *           format: uuid
  *     requestBody:
  *       required: true
+ *       description: JSON hoặc multipart — thêm ảnh minh chứng qua field file inspectionImages.
  *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               status: { type: string, enum: [passed, failed] }
+ *               overallCondition: { type: string, enum: [excellent, good, fair, poor] }
+ *               frameCondition: { type: string }
+ *               brakeCondition: { type: string }
+ *               drivetrainCondition: { type: string }
+ *               wheelCondition: { type: string }
+ *               inspectionNote: { type: string }
+ *               recommendation: { type: string }
+ *               reportFile: { type: string }
+ *               inspectionImages:
+ *                 type: string
+ *                 format: binary
+ *           encoding:
+ *             inspectionImages:
+ *               contentType: image/png, image/jpeg, image/webp, image/gif
  *         application/json:
  *           schema:
  *             type: object
  *             properties:
+ *               status:
+ *                 type: string
+ *                 enum: [passed, failed]
  *               overallCondition:
+ *                 type: string
+ *               frameCondition:
  *                 type: string
  *               inspectionNote:
  *                 type: string
  *               recommendation:
  *                 type: string
+ *               inspectionImages:
+ *                 type: array
+ *                 items:
+ *                   type: string
  *     responses:
  *       200:
  *         description: Inspection updated successfully
  *       404:
  *         description: Inspection not found
  */
-router.put('/v1/inspections/:inspectionId', isInspector, updateInspection);
+router.put('/v1/inspections/:inspectionId', isInspector, parseInspectionUpdateMultipart, updateInspection);
 
 export default router;
