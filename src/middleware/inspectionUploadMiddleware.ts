@@ -108,12 +108,16 @@ export function mergeInspectionProofUrls(
     }
   }
 
-  const fallback = fallbackUrls ?? [];
-
+  // On resubmit: If new files uploaded, use ONLY new files (replace old ones)
+  // Don't merge with fallback (previous inspection images)
   if (uploaded.length > 0) {
     if (fromBody.length > 0) return [...uploaded, ...fromBody];
-    return [...uploaded, ...fallback];
+    return uploaded; // Only new uploaded files, no fallback
   }
+  
+  // If no new files uploaded, use body URLs if provided
   if (fromBody.length > 0) return fromBody;
-  return fallback;
+  
+  // Fallback to previous inspection images (only if nothing else provided)
+  return fallbackUrls ?? [];
 }

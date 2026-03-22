@@ -381,6 +381,8 @@ export const submitInspection = async (req: Request, res: Response) => {
         message: 'Status and overall condition are required',
       });
     }
+    
+    // inspectionImages can be empty - no validation required
 
     // Kiểm tra xe tồn tại
     const [bike] = await db.select().from(bikes).where(eq(bikes.id, bikeId as string));
@@ -392,11 +394,18 @@ export const submitInspection = async (req: Request, res: Response) => {
       });
     }
 
-    // PREVENT DUPLICATE SUBMISSIONS: Check if bike already has a completed inspection in this cycle
+    // REQUIRE: Inspection must be in progress to submit
     if (bike.inspectionStatus === 'completed') {
       return res.status(400).json({
         success: false,
-        message: 'This bike already has a completed inspection. Cannot submit duplicate inspection. Awaiting admin action or seller resubmit.',
+        message: 'This bike inspection already completed. Cannot submit duplicate inspection. Awaiting admin action or seller resubmit.',
+      });
+    }
+
+    if (bike.inspectionStatus !== 'in_progress') {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot submit inspection. Inspection status is '${bike.inspectionStatus}'. Must call startInspection first to set status to 'in_progress'.`,
       });
     }
 
@@ -713,14 +722,14 @@ export const updateInspection = async (req: Request, res: Response) => {
 
     const proofFiles = ((req as any).files as InspectionProofFiles | undefined)?.inspectionImages;
     if (proofFiles && proofFiles.length > 0) {
+      // Only allow updating images when inspectionStatus is 'completed' (already verified above)
+      // When new files uploaded: APPEND to old images (stack them)
       const newUrls = proofFiles.map((f) => publicInspectionImageUrl(f.filename));
       const extraUrls = parseInspectionImagesFromBody((req.body as Record<string, unknown>).inspectionImages);
-      const base =
-        updateData.inspectionImages !== undefined
-          ? updateData.inspectionImages
-          : (inspection.inspectionImages as string[] | null) ?? [];
-      updateData.inspectionImages = [...newUrls, ...(extraUrls ?? []), ...base];
+      updateData.inspectionImages = extraUrls && extraUrls.length > 0 ? [...newUrls, ...extraUrls] : newUrls;
     }
+    // If no new files uploaded but inspectionImages already in updateData from body: use as-is (from multipart parser)
+    // If no new files and no body field: updateData.inspectionImages stays undefined → old images preserved
 
     // Cập nhật (chỉ field hợp lệ của bảng inspections)
     const { bikeId: _b, ...rest } = updateData as Partial<InspectionFormData> & { bikeId?: string };

@@ -31,8 +31,23 @@ const storage = multer.diskStorage({
 const imageMimes = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 
 function fileFilter(_req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) {
-  if (file.fieldname === 'images' && imageMimes.has(file.mimetype)) {
-    return cb(null, true);
+  // Allow empty/missing files - only validate actual file uploads with content
+  if (file.fieldname === 'images') {
+    // Allow empty files or text fields sent as form data (e.g., empty images="")
+    // When client sends empty field, it comes as text/plain mimetype
+    if (file.size === 0 || file.mimetype === 'text/plain') {
+      return cb(null, true);
+    }
+    // Validate only actual image files being uploaded
+    if (imageMimes.has(file.mimetype)) {
+      return cb(null, true);
+    }
+    // Reject non-image files
+    return cb(
+      new Error(
+        `Loại file không hỗ trợ (${file.fieldname}): ${file.mimetype}. Chỉ upload ảnh (jpeg, png, webp, gif). Video gửi bằng field text \`video\` (URL).`
+      )
+    );
   }
   cb(
     new Error(

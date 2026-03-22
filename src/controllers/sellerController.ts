@@ -390,6 +390,14 @@ export const updateBike = async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Không tìm thấy tin đăng hoặc bạn không sở hữu tin này' });
     }
 
+    // Cannot update if inspector is currently inspecting
+    if (existingBike.inspectionStatus === 'in_progress') {
+      return res.status(400).json({
+        success: false,
+        message: 'Không thể chỉnh sửa tin khi inspector đang kiểm định. Vui lòng chờ kết quả kiểm định.',
+      });
+    }
+
     if (existingBike.status === 'sold') {
       return res.status(400).json({ success: false, message: 'Không thể chỉnh sửa tin đã bán' });
     }
@@ -435,12 +443,17 @@ export const updateBike = async (req: Request, res: Response) => {
     }
     if (color !== undefined) updateData.color = color;
     // Ảnh: upload file (multipart) hoặc mảng URL JSON; video: chỉ URL (body text / JSON)
+    // When new files uploaded: APPEND to old images (stack them)
     if (files?.images && files.images.length > 0) {
-      updateData.images = collectImageUrlsFromRequest(req);
+      const newUrls = collectImageUrlsFromRequest(req);
+      const bodyImages = normalizeImagesFromBody(req.body as Record<string, unknown>);
+      updateData.images = bodyImages && bodyImages.length > 0 ? [...newUrls, ...bodyImages] : newUrls;
     } else if (Object.prototype.hasOwnProperty.call(req.body, 'images')) {
+      // If no new files but body has images: use those
       const normalized = normalizeImagesFromBody(req.body as Record<string, unknown>);
       if (normalized !== undefined) updateData.images = normalized;
     }
+    // If no new files and no body images: updateData.images stays undefined → old images preserved
     if (Object.prototype.hasOwnProperty.call(req.body, 'video')) {
       const v = collectVideoUrlFromRequest(req);
       updateData.video = v === undefined ? null : v;
@@ -468,11 +481,34 @@ export const updateBike = async (req: Request, res: Response) => {
       }
     }
 
-    // Nếu sửa thông tin kỹ thuật/giá cả của tin đã approved → reset về pending
+    // Core fields that trigger resets
     const coreFields = ['title', 'description', 'brand', 'model', 'year', 'price', 'condition'];
     const editingCoreFields = coreFields.some((f) => updateData[f] !== undefined);
-    if (editingCoreFields && existingBike.status === 'approved') {
+    
+    // SCENARIO 1: Free edit (pending status, no inspection yet) → no changes
+    if (existingBike.status === 'pending' && existingBike.inspectionStatus === 'pending') {
+      // Allow free edit, no status/inspection resets
+    } 
+    // SCENARIO 2: Rejected bikes → reset inspection only, NEVER change status
+    // Status change MUST go through resubmitBike endpoint
+    else if (existingBike.status === 'rejected') {
+      updateData.inspectionStatus = 'pending';
+      updateData.isVerified = 'not_verified';
+    }
+    // SCENARIO 3: After inspection completed (inspectionStatus='completed') → reset inspection and status
+    else if (editingCoreFields && existingBike.inspectionStatus === 'completed') {
+      updateData.inspectionStatus = 'pending';
+      updateData.isVerified = 'not_verified';
+      // For approved bikes that were re-edited after inspection
+      if (existingBike.status === 'approved') {
+        updateData.status = 'pending';
+      }
+    }
+    // SCENARIO 4: After admin approved (status='approved') → reset all
+    else if (editingCoreFields && existingBike.status === 'approved') {
       updateData.status = 'pending';
+      updateData.inspectionStatus = 'pending';
+      updateData.isVerified = 'not_verified';
     }
 
     const [updatedBike] = await db
@@ -481,10 +517,7 @@ export const updateBike = async (req: Request, res: Response) => {
       .where(and(eq(bikes.id, id as string), eq(bikes.sellerId, sellerId)))
       .returning();
 
-    const message =
-      updateData.status === 'pending'
-        ? 'Tin đã được cập nhật và gửi lại để admin kiểm duyệt.'
-        : 'Tin đã được cập nhật thành công';
+    const message = buildUpdateMessage(existingBike.status, updateData);
 
     res.status(200).json({ success: true, data: updatedBike, message });
   } catch (error) {
@@ -495,6 +528,16 @@ export const updateBike = async (req: Request, res: Response) => {
     });
   }
 };
+
+/**
+ * Helper function to build appropriate message based on update scenario
+ */
+function buildUpdateMessage(oldStatus: string, updateData: Record<string, any>): string {
+  if (updateData.status === 'pending') {
+    return 'Tin đã được cập nhật và gửi lại để admin kiểm duyệt.';
+  }
+  return 'Tin đã được cập nhật thành công';
+}
 
 /**
  * PUT /api/seller/v1/bikes/:id/visibility
@@ -612,8 +655,8 @@ export const deleteBike = async (req: Request, res: Response) => {
 /**
  * POST /api/seller/v1/bikes/:id/resubmit
  * Seller resubmit rejected bike (failed inspector verification)
- * After fixing the bike info, seller can resubmit to inspection queue
- * Changes status from "rejected" back to "pending" and inspectionStatus to "pending"
+ * Changes status from rejected to pending for re-inspection
+ * Edit bike details via updateBike before resubmit if needed
  */
 export const resubmitBike = async (req: Request, res: Response) => {
   try {
@@ -640,7 +683,7 @@ export const resubmitBike = async (req: Request, res: Response) => {
       });
     }
 
-    // Reset bike to pending inspection
+    // Change status from rejected to pending for re-inspection
     const [updatedBike] = await db
       .update(bikes)
       .set({
@@ -655,7 +698,7 @@ export const resubmitBike = async (req: Request, res: Response) => {
     res.status(200).json({
       success: true,
       data: updatedBike,
-      message: 'Xe đã được gửi lại kiểm định. Inspector sẽ review lại các thông tin bạn cập nhật.',
+      message: 'Xe đã được gửi lại kiểm định. Inspector sẽ review lại.',
     });
   } catch (error) {
     res.status(500).json({
