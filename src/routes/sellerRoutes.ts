@@ -16,6 +16,7 @@ import {
   getMyReviews,
 } from '../controllers/sellerController';
 import { isAuthenticated, requireRole } from '../middleware/authMiddleware';
+import { parseBikeListingMultipart, parseBikeUpdateMultipart } from '../middleware/bikeUploadMiddleware';
 
 const router = express.Router();
 
@@ -53,7 +54,35 @@ router.get('/v1/dashboard', getDashboard);
  *       - bearerAuth: []
  *     requestBody:
  *       required: true
+ *       description: |
+ *         **Upload ảnh:** chọn `multipart/form-data`. Field `images` = file ảnh; `video` = **URL chuỗi** (YouTube/link), không upload file video.
  *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required: [title, description, brand, model, year, price, condition]
+ *             properties:
+ *               title: { type: string }
+ *               description: { type: string }
+ *               brand: { type: string }
+ *               model: { type: string }
+ *               year: { type: string }
+ *               price: { type: string }
+ *               condition: { type: string, enum: [excellent, good, fair, poor] }
+ *               mileage: { type: string }
+ *               color: { type: string }
+ *               categoryId: { type: string, format: uuid }
+ *               images:
+ *                 type: string
+ *                 format: binary
+ *                 description: "Ảnh xe (jpeg/png/webp/gif). Có thể thêm nhiều part cùng tên `images` (Postman/FE); Swagger Try it thường chỉ 1 file/part."
+ *               video:
+ *                 type: string
+ *                 description: "URL video (YouTube, link mp4...), tùy chọn — không gửi file."
+ *                 example: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+ *           encoding:
+ *             images:
+ *               contentType: image/png, image/jpeg, image/webp, image/gif
  *         application/json:
  *           schema:
  *             type: object
@@ -91,9 +120,11 @@ router.get('/v1/dashboard', getDashboard);
  *                 type: array
  *                 items:
  *                   type: string
+ *                 description: Mảng URL ảnh (không upload file)
  *                 example: ["https://example.com/bike1.jpg"]
  *               video:
  *                 type: string
+ *                 description: URL video (YouTube/Direct URL)
  *                 example: "https://youtube.com/watch?v=abc123"
  *               categoryId:
  *                 type: string
@@ -106,7 +137,7 @@ router.get('/v1/dashboard', getDashboard);
  *       401:
  *         description: Unauthorized
  */
-router.post('/v1/bikes', createBike);
+router.post('/v1/bikes', parseBikeListingMultipart, createBike);
 
 /**
  * @swagger
@@ -201,7 +232,32 @@ router.get('/v1/bikes/:id', getMyBikeDetail);
  *           type: string
  *           format: uuid
  *     requestBody:
+ *       description: JSON hoặc multipart (upload ảnh file; video chỉ URL text).
  *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               title: { type: string }
+ *               description: { type: string }
+ *               brand: { type: string }
+ *               model: { type: string }
+ *               year: { type: string }
+ *               price: { type: string }
+ *               condition: { type: string, enum: [excellent, good, fair, poor] }
+ *               mileage: { type: string }
+ *               color: { type: string }
+ *               categoryId: { type: string, format: uuid }
+ *               images:
+ *                 type: string
+ *                 format: binary
+ *                 description: Ảnh mới (field images; nhiều file dùng Postman/FE)
+ *               video:
+ *                 type: string
+ *                 description: URL video, tùy chọn
+ *           encoding:
+ *             images:
+ *               contentType: image/png, image/jpeg, image/webp, image/gif
  *         application/json:
  *           schema:
  *             type: object
@@ -244,7 +300,7 @@ router.get('/v1/bikes/:id', getMyBikeDetail);
  *       401:
  *         description: Unauthorized
  */
-router.put('/v1/bikes/:id', updateBike);
+router.put('/v1/bikes/:id', parseBikeUpdateMultipart, updateBike);
 
 /**
  * @swagger

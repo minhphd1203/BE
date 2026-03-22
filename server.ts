@@ -39,6 +39,15 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Ảnh/video tin đăng (upload local — dùng APP_URL trong .env để tạo link đầy đủ, vd http://localhost:3000)
+const bikesUploadStatic = path.join(process.cwd(), 'uploads', 'bikes');
+fs.mkdirSync(bikesUploadStatic, { recursive: true });
+app.use('/uploads/bikes', express.static(bikesUploadStatic));
+
+const inspectionsUploadStatic = path.join(process.cwd(), 'uploads', 'inspections');
+fs.mkdirSync(inspectionsUploadStatic, { recursive: true });
+app.use('/uploads/inspections', express.static(inspectionsUploadStatic));
+
 // Request logger
 app.use((req, res, next) => {
   const start = Date.now();

@@ -1,8 +1,74 @@
 import { Request, Response } from 'express';
 import { db } from '../db';
 import { bikes, inspections, users, categories } from '../db/schema';
-import { eq, desc, and, sql } from 'drizzle-orm';
+import { eq, desc, and, or, sql } from 'drizzle-orm';
 import { InspectionFormData, ApiResponse } from '../models';
+import {
+  mergeInspectionProofUrls,
+  publicInspectionImageUrl,
+  type InspectionProofFiles,
+} from '../middleware/inspectionUploadMiddleware';
+
+function pickBodyStr(body: Record<string, unknown>, key: string): string | undefined {
+  const v = body[key];
+  if (v === undefined || v === null || v === '') return undefined;
+  return String(v);
+}
+
+/** inspectionImages trong multipart: có thể là JSON string */
+function parseInspectionImagesFromBody(raw: unknown): string[] | undefined {
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  if (Array.isArray(raw)) return raw.map(String);
+  if (typeof raw === 'string') {
+    try {
+      const p = JSON.parse(raw) as unknown;
+      return Array.isArray(p) ? p.map(String) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+/** Form kiểm định từ multipart (field text) */
+function inspectionFormFromMultipart(body: Record<string, unknown>, bikeId: string): InspectionFormData {
+  return {
+    bikeId,
+    status: pickBodyStr(body, 'status') as InspectionFormData['status'],
+    overallCondition: pickBodyStr(body, 'overallCondition') as InspectionFormData['overallCondition'],
+    frameCondition: pickBodyStr(body, 'frameCondition'),
+    brakeCondition: pickBodyStr(body, 'brakeCondition'),
+    drivetrainCondition: pickBodyStr(body, 'drivetrainCondition'),
+    wheelCondition: pickBodyStr(body, 'wheelCondition'),
+    inspectionNote: pickBodyStr(body, 'inspectionNote'),
+    recommendation: pickBodyStr(body, 'recommendation'),
+    reportFile: pickBodyStr(body, 'reportFile'),
+    inspectionImages: parseInspectionImagesFromBody(body.inspectionImages),
+  };
+}
+
+const INSPECTION_UPDATE_KEYS = [
+  'status',
+  'overallCondition',
+  'frameCondition',
+  'brakeCondition',
+  'drivetrainCondition',
+  'wheelCondition',
+  'inspectionNote',
+  'recommendation',
+  'reportFile',
+] as const;
+
+function partialInspectionFromMultipart(body: Record<string, unknown>): Partial<InspectionFormData> {
+  const out: Partial<InspectionFormData> = {};
+  for (const key of INSPECTION_UPDATE_KEYS) {
+    const s = pickBodyStr(body, key);
+    if (s !== undefined) (out as Record<string, string>)[key] = s;
+  }
+  const imgs = parseInspectionImagesFromBody(body.inspectionImages);
+  if (imgs !== undefined) out.inspectionImages = imgs;
+  return out;
+}
 
 // ============= QUẢN LÝ KIỂM ĐỊNH XE ĐẠP =============
 
@@ -11,17 +77,20 @@ export const getDashboard = async (req: Request, res: Response) => {
   try {
     const inspectorId = req.user?.userId;
 
+    /** Xe vào hàng chờ inspector: tin seller pending (BEFORE admin approval) */
+    const queueStatus = eq(bikes.status, 'pending');
+
     // Đếm số xe chờ kiểm định (pending)
     const [pendingCount] = await db
       .select({ count: sql<number>`cast(count(*) as int)` })
       .from(bikes)
-      .where(eq(bikes.inspectionStatus, 'pending'));
+      .where(and(queueStatus, eq(bikes.inspectionStatus, 'pending')));
 
     // Đếm số xe đang kiểm định (in_progress)
     const [inProgressCount] = await db
       .select({ count: sql<number>`cast(count(*) as int)` })
       .from(bikes)
-      .where(eq(bikes.inspectionStatus, 'in_progress'));
+      .where(and(queueStatus, eq(bikes.inspectionStatus, 'in_progress')));
 
     // Đếm tổng số lần kiểm định của inspector này
     const [myInspectionsCount] = await db
@@ -89,6 +158,7 @@ export const getPendingBikes = async (req: Request, res: Response) => {
         price: bikes.price,
         condition: bikes.condition,
         images: bikes.images,
+        video: bikes.video,
         status: bikes.status,
         isVerified: bikes.isVerified,
         inspectionStatus: bikes.inspectionStatus,
@@ -102,7 +172,7 @@ export const getPendingBikes = async (req: Request, res: Response) => {
       .leftJoin(categories, eq(bikes.categoryId, categories.id))
       .$dynamic();
 
-    // Base conditions
+    // Inspector inspects BEFORE admin approval: only pending bikes (NOT admin-approved yet)
     const conditions = [
       eq(bikes.status, 'pending'), // Get bikes awaiting inspection (NOT yet admin-approved)
       sql`${bikes.inspectionStatus} IN ('pending', 'in_progress')`
@@ -168,6 +238,7 @@ export const getBikeDetail = async (req: Request, res: Response) => {
         mileage: bikes.mileage,
         color: bikes.color,
         images: bikes.images,
+        video: bikes.video,
         status: bikes.status,
         isVerified: bikes.isVerified,
         inspectionStatus: bikes.inspectionStatus,
@@ -298,7 +369,10 @@ export const submitInspection = async (req: Request, res: Response) => {
   try {
     const bikeId = req.params.bikeId as string;
     const inspectorId = req.user?.userId;
-    const inspectionData: InspectionFormData = req.body;
+    const multipart = (req.headers['content-type'] || '').includes('multipart/form-data');
+    const inspectionData: InspectionFormData = multipart
+      ? inspectionFormFromMultipart(req.body as Record<string, unknown>, bikeId)
+      : { ...req.body, bikeId: (req.body as InspectionFormData).bikeId || bikeId };
 
     // Validate required fields
     if (!inspectionData.status || !inspectionData.overallCondition) {
@@ -371,6 +445,11 @@ export const submitInspection = async (req: Request, res: Response) => {
       }
     }
 
+    // Ảnh minh chứng: upload file (field inspectionImages) + URL trong body/JSON → lưu vào inspectionImages (schema)
+    const proofFallback =
+      inspectionData.inspectionImages ?? (previousInspection?.inspectionImages as string[] | undefined) ?? [];
+    const mergedProofUrls = mergeInspectionProofUrls(req, proofFallback);
+
     // Build inspection data with auto-fill from previous inspection
     const finalInspectionData = {
       frameCondition: inspectionData.frameCondition ?? previousInspection?.frameCondition,
@@ -380,7 +459,7 @@ export const submitInspection = async (req: Request, res: Response) => {
       overallCondition: inspectionData.overallCondition ?? previousInspection?.overallCondition,
       inspectionNote: inspectionData.inspectionNote ?? previousInspection?.inspectionNote,
       recommendation: inspectionData.recommendation ?? previousInspection?.recommendation,
-      inspectionImages: inspectionData.inspectionImages ?? previousInspection?.inspectionImages ?? [],
+      inspectionImages: mergedProofUrls,
       reportFile: inspectionData.reportFile ?? previousInspection?.reportFile,
     };
 
@@ -583,7 +662,10 @@ export const updateInspection = async (req: Request, res: Response) => {
   try {
     const inspectionId = req.params.inspectionId as string;
     const inspectorId = req.user?.userId;
-    const updateData: Partial<InspectionFormData> = req.body;
+    const multipart = (req.headers['content-type'] || '').includes('multipart/form-data');
+    let updateData: Partial<InspectionFormData> = multipart
+      ? partialInspectionFromMultipart(req.body as Record<string, unknown>)
+      : { ...req.body };
 
     // Kiểm tra inspection tồn tại và thuộc về inspector này
     const [inspection] = await db
@@ -629,11 +711,23 @@ export const updateInspection = async (req: Request, res: Response) => {
       });
     }
 
-    // Cập nhật
+    const proofFiles = ((req as any).files as InspectionProofFiles | undefined)?.inspectionImages;
+    if (proofFiles && proofFiles.length > 0) {
+      const newUrls = proofFiles.map((f) => publicInspectionImageUrl(f.filename));
+      const extraUrls = parseInspectionImagesFromBody((req.body as Record<string, unknown>).inspectionImages);
+      const base =
+        updateData.inspectionImages !== undefined
+          ? updateData.inspectionImages
+          : (inspection.inspectionImages as string[] | null) ?? [];
+      updateData.inspectionImages = [...newUrls, ...(extraUrls ?? []), ...base];
+    }
+
+    // Cập nhật (chỉ field hợp lệ của bảng inspections)
+    const { bikeId: _b, ...rest } = updateData as Partial<InspectionFormData> & { bikeId?: string };
     const [updatedInspection] = await db
       .update(inspections)
       .set({
-        ...updateData,
+        ...rest,
         updatedAt: new Date(),
       })
       .where(eq(inspections.id, inspectionId as string))
