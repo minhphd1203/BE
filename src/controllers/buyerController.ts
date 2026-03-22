@@ -12,8 +12,8 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 /**
  * Search bikes with filters (brand, model, price range, condition, etc.)
  * Returns: minimal bike info for list view (title, price, images, status)
- * Only shows APPROVED bikes (admin approved, not yet verified by inspector)
- * Verification happens AFTER buyer decides to purchase
+ * Only shows APPROVED bikes (inspector verified, then admin approved for public listing)
+ * Flow: Inspector inspects first → if passed, awaits admin approval → only then shown to buyers
  * Query parameters:
  * - brand: string (partial match)
  * - model: string (partial match)

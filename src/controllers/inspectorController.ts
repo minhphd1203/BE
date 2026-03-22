@@ -104,7 +104,7 @@ export const getPendingBikes = async (req: Request, res: Response) => {
 
     // Base conditions
     const conditions = [
-      eq(bikes.status, 'approved'), // Chỉ lấy xe đã được admin duyệt
+      eq(bikes.status, 'pending'), // Get bikes awaiting inspection (NOT yet admin-approved)
       sql`${bikes.inspectionStatus} IN ('pending', 'in_progress')`
     ];
 
