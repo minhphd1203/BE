@@ -364,6 +364,8 @@ export const startInspection = async (req: Request, res: Response) => {
  * - First inspection: frameCondition = "poor" (that's what inspector saw)
  * - Seller corrects listing to match inspector's findings (stops claiming "excellent")
  * - Resubmit: frameCondition auto-fills as "poor" (same reality) - inspector only sets status
+ * 
+ * CONSTRAINT: Inspector CANNOT mark as PASSED unless overall condition is 'good' or 'excellent'
  */
 export const submitInspection = async (req: Request, res: Response) => {
   try {
@@ -394,7 +396,8 @@ export const submitInspection = async (req: Request, res: Response) => {
       });
     }
 
-    // REQUIRE: Inspection must be in progress to submit
+    // PRIORITY 1: Check if bike inspection already completed
+    // This error should show FIRST before any other validation
     if (bike.inspectionStatus === 'completed') {
       return res.status(400).json({
         success: false,
@@ -402,6 +405,7 @@ export const submitInspection = async (req: Request, res: Response) => {
       });
     }
 
+    // REQUIRE: Inspection must be in progress to submit
     if (bike.inspectionStatus !== 'in_progress') {
       return res.status(400).json({
         success: false,
@@ -454,9 +458,28 @@ export const submitInspection = async (req: Request, res: Response) => {
       }
     }
 
+    // PRIORITY 2: Check constraint (only after bike status is validated)
+    // CONSTRAINT: If status is 'passed', overall condition must be 'fair' or above (not 'poor')
+    if (inspectionData.status === 'passed') {
+      const acceptableConditions = ['excellent', 'good', 'fair'];
+      if (!acceptableConditions.includes(inspectionData.overallCondition)) {
+        return res.status(400).json({
+          success: false,
+          message: `Cannot mark inspection as PASSED with overall condition "${inspectionData.overallCondition}". To pass, overall condition must be "fair", "good" or "excellent". Only bikes with "poor" condition must be marked as FAILED.`,
+          acceptableConditionsForPass: acceptableConditions,
+          receivedCondition: inspectionData.overallCondition,
+        });
+      }
+    }
+
     // Ảnh minh chứng: upload file (field inspectionImages) + URL trong body/JSON → lưu vào inspectionImages (schema)
+    // On resubmission: Allow explicit empty array to clear images (don't fallback to previous)
+    // - If inspectionData.inspectionImages is explicitly set (even if empty []), use it as-is
+    // - Only fallback to previous images if inspectionData.inspectionImages is undefined
     const proofFallback =
-      inspectionData.inspectionImages ?? (previousInspection?.inspectionImages as string[] | undefined) ?? [];
+      inspectionData.inspectionImages !== undefined 
+        ? inspectionData.inspectionImages 
+        : (previousInspection?.inspectionImages as string[] | undefined) ?? [];
     const mergedProofUrls = mergeInspectionProofUrls(req, proofFallback);
 
     // Build inspection data with auto-fill from previous inspection

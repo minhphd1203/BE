@@ -31,16 +31,14 @@ const storage = multer.diskStorage({
 const imageMimes = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 
 function fileFilter(_req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) {
-  // Allow empty/missing files - only validate actual file uploads with content
   if (file.fieldname === 'images') {
-    // Allow empty files or text fields sent as form data (e.g., empty images="")
-    // When client sends empty field, it comes as text/plain mimetype
+    // Reject empty files - don't save them at all
     if (file.size === 0 || file.mimetype === 'text/plain') {
-      return cb(null, true);
+      return cb(null, false); // Reject, don't save to disk
     }
     // Validate only actual image files being uploaded
     if (imageMimes.has(file.mimetype)) {
-      return cb(null, true);
+      return cb(null, true); // Accept actual images
     }
     // Reject non-image files
     return cb(
@@ -147,12 +145,13 @@ export function normalizeImagesFromBody(body: Record<string, unknown>): string[]
 
 export function collectImageUrlsFromRequest(req: Request): string[] {
   const files = req.files as BikeListingFiles | undefined;
+  // Only actual image files make it to req.files (empty files are rejected by fileFilter)
   const uploaded = files?.images?.map((f) => publicBikeMediaUrl(f.filename)) ?? [];
   const fromBody = normalizeImagesFromBody(req.body as Record<string, unknown>);
   if (uploaded.length > 0) {
     return fromBody?.length ? [...uploaded, ...fromBody] : uploaded;
   }
-  return fromBody ?? (Array.isArray((req.body as { images?: string[] }).images) ? (req.body as { images: string[] }).images : []);
+  return fromBody ?? [];
 }
 
 /** Video chỉ nhận URL (JSON hoặc field text trong multipart), không upload file. */

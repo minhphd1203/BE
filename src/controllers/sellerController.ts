@@ -142,7 +142,7 @@ export const createBike = async (req: Request, res: Response) => {
       });
     }
 
-    const validConditions = ['excellent', 'good', 'fair', 'poor'];
+    const validConditions = ['excellent', 'good', 'fair'];
     if (!validConditions.includes(condition)) {
       return res.status(400).json({
         success: false,
@@ -425,7 +425,7 @@ export const updateBike = async (req: Request, res: Response) => {
       updateData.price = p.value;
     }
     if (condition !== undefined) {
-      const validConditions = ['excellent', 'good', 'fair', 'poor'];
+      const validConditions = ['excellent', 'good', 'fair'];
       if (!validConditions.includes(condition)) {
         return res.status(400).json({
           success: false,

@@ -30,8 +30,21 @@ const storage = multer.diskStorage({
 const imageMimes = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 
 function fileFilter(_req: Request, file: any, cb: any) {
-  if (file.fieldname === 'inspectionImages' && imageMimes.has(file.mimetype)) {
-    return cb(null, true);
+  if (file.fieldname === 'inspectionImages') {
+    // Reject empty files - don't save them at all
+    if (file.size === 0 || file.mimetype === 'text/plain') {
+      return cb(null, false); // Reject, don't save to disk
+    }
+    // Validate actual image files being uploaded
+    if (imageMimes.has(file.mimetype)) {
+      return cb(null, true); // Accept actual images
+    }
+    // Reject non-image files
+    return cb(
+      new Error(
+        `Ảnh minh chứng chỉ gửi ở field \`inspectionImages\` (jpeg/png/webp/gif). Nhận: ${file.fieldname} / ${file.mimetype}`
+      )
+    );
   }
   cb(
     new Error(
@@ -85,12 +98,14 @@ export type InspectionProofFiles = {
  * URL từ file upload (field inspectionImages) + URL trong body (JSON string hoặc mảng).
  * - Chỉ upload file, không gửi inspectionImages trong body: nối thêm fallback (vd ảnh lần kiểm trước khi resubmit).
  * - Body có mảng URL: ưu tiên [...upload, ...body] hoặc chỉ body / chỉ fallback khi không có file.
+ * - On resubmission: If inspector explicitly sends empty array [], respect it (clear images).
  */
 export function mergeInspectionProofUrls(
   req: Request,
   fallbackUrls: string[] | null | undefined
 ): string[] {
   const files = ((req as any).files as InspectionProofFiles | undefined)?.inspectionImages;
+  // Only actual image files make it to req.files (empty files are rejected by fileFilter)
   const uploaded = files?.map((f) => publicInspectionImageUrl(f.filename)) ?? [];
 
   const raw = (req.body as Record<string, unknown>).inspectionImages;
@@ -108,16 +123,18 @@ export function mergeInspectionProofUrls(
     }
   }
 
-  // On resubmit: If new files uploaded, use ONLY new files (replace old ones)
-  // Don't merge with fallback (previous inspection images)
+  // If new files uploaded, use them (replace old ones on resubmit)
   if (uploaded.length > 0) {
     if (fromBody.length > 0) return [...uploaded, ...fromBody];
-    return uploaded; // Only new uploaded files, no fallback
+    return uploaded; // Only new uploaded files
   }
   
-  // If no new files uploaded, use body URLs if provided
-  if (fromBody.length > 0) return fromBody;
+  // If explicit images provided in body (including empty array), use them
+  // This allows inspector to clear images by sending []
+  if (raw !== undefined && raw !== null && raw !== '') {
+    return fromBody; // Could be empty [] if inspector explicitly cleared images
+  }
   
-  // Fallback to previous inspection images (only if nothing else provided)
+  // No new files, no body images: fallback to previous inspection images if available
   return fallbackUrls ?? [];
 }

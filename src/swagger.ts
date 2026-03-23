@@ -68,7 +68,7 @@ const options = {
             model: { type: 'string' },
             year: { type: 'integer' },
             price: { type: 'number' },
-            condition: { type: 'string', enum: ['excellent', 'good', 'fair', 'poor'] },
+            condition: { type: 'string', enum: ['excellent', 'good', 'fair'] },
             mileage: { type: 'integer', nullable: true },
             color: { type: 'string', nullable: true },
             images: { type: 'array', items: { type: 'string' } },
