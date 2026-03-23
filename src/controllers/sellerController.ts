@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { db } from '../db';
 import { bikes, transactions, messages, reviews, categories, users } from '../db/schema';
-import { desc, eq, and, or, like, asc } from 'drizzle-orm';
+import { desc, eq, and, or, like, asc, sql } from 'drizzle-orm';
 import type { BikeListingFiles } from '../middleware/bikeUploadMiddleware';
 import {
   collectImageUrlsFromRequest,
@@ -10,6 +10,62 @@ import {
 } from '../middleware/bikeUploadMiddleware';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Slug: chữ số + gạch ngang, không khoảng trắng (vd mountain-bike) */
+const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/i;
+
+/**
+ * categoryId trong body có thể là: UUID, slug (vd mountain-bike), hoặc tên khớp chính xác (không phân biệt hoa thường).
+ */
+async function resolveCategoryInput(
+  raw: unknown
+): Promise<{ ok: true; id: string | null } | { ok: false; message: string }> {
+  if (raw === undefined || raw === null) {
+    return { ok: true, id: null };
+  }
+  const s = String(raw).trim();
+  if (s === '') {
+    return { ok: true, id: null };
+  }
+
+  if (UUID_REGEX.test(s)) {
+    const [row] = await db
+      .select({ id: categories.id })
+      .from(categories)
+      .where(eq(categories.id, s))
+      .limit(1);
+    if (!row) {
+      return { ok: false, message: 'Danh mục không tồn tại (UUID không hợp lệ).' };
+    }
+    return { ok: true, id: row.id };
+  }
+
+  const slugKey = s.toLowerCase();
+  if (SLUG_PATTERN.test(s) && !/\s/.test(s)) {
+    const [bySlug] = await db
+      .select({ id: categories.id })
+      .from(categories)
+      .where(eq(categories.slug, slugKey))
+      .limit(1);
+    if (bySlug) {
+      return { ok: true, id: bySlug.id };
+    }
+  }
+
+  const [byName] = await db
+    .select({ id: categories.id })
+    .from(categories)
+    .where(sql`lower(trim(${categories.name})) = ${s.toLowerCase()}`)
+    .limit(1);
+  if (byName) {
+    return { ok: true, id: byName.id };
+  }
+
+  return {
+    ok: false,
+    message: `Không tìm thấy danh mục "${s}". Dùng tên đúng (vd: Mountain Bike), slug (vd: mountain-bike), hoặc UUID. Gọi GET /api/seller/v1/categories để xem danh sách.`,
+  };
+}
 
 const MAX_BIKE_YEAR = () => new Date().getFullYear() + 1;
 
@@ -121,6 +177,38 @@ export const getDashboard = async (req: Request, res: Response) => {
   }
 };
 
+// ============= CATEGORIES (CHO FORM ĐĂNG / SỬA TIN) =============
+
+/**
+ * GET /api/seller/v1/categories
+ * Danh sách danh mục xe (id, name, slug) — dùng cho dropdown; FE có thể gửi lại id, slug hoặc name khi tạo/sửa tin.
+ */
+export const getCategoriesForSeller = async (_req: Request, res: Response) => {
+  try {
+    const rows = await db
+      .select({
+        id: categories.id,
+        name: categories.name,
+        slug: categories.slug,
+        description: categories.description,
+      })
+      .from(categories)
+      .orderBy(asc(categories.name));
+
+    res.status(200).json({
+      success: true,
+      data: rows,
+      message: 'Danh sách danh mục',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi khi lấy danh mục',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
 // ============= BIKE LISTINGS =============
 
 /**
@@ -165,22 +253,11 @@ export const createBike = async (req: Request, res: Response) => {
 
     let finalCategoryId: string | null = null;
     if (categoryId !== undefined && categoryId !== null && categoryId !== '') {
-      const cid = String(categoryId);
-      if (!UUID_REGEX.test(cid)) {
-        return res.status(400).json({ success: false, message: 'categoryId không đúng định dạng UUID' });
+      const resolved = await resolveCategoryInput(categoryId);
+      if (!resolved.ok) {
+        return res.status(400).json({ success: false, message: resolved.message });
       }
-      const [catRow] = await db
-        .select({ id: categories.id })
-        .from(categories)
-        .where(eq(categories.id, cid))
-        .limit(1);
-      if (!catRow) {
-        return res.status(400).json({
-          success: false,
-          message: 'Danh mục không tồn tại. Lấy id từ API danh mục hoặc gửi categoryId: null',
-        });
-      }
-      finalCategoryId = cid;
+      finalCategoryId = resolved.id;
     }
 
     const [newBike] = await db
@@ -462,22 +539,11 @@ export const updateBike = async (req: Request, res: Response) => {
       if (categoryId === null || categoryId === '') {
         updateData.categoryId = null;
       } else {
-        const cid = String(categoryId);
-        if (!UUID_REGEX.test(cid)) {
-          return res.status(400).json({ success: false, message: 'categoryId không đúng định dạng UUID' });
+        const resolved = await resolveCategoryInput(categoryId);
+        if (!resolved.ok) {
+          return res.status(400).json({ success: false, message: resolved.message });
         }
-        const [catRow] = await db
-          .select({ id: categories.id })
-          .from(categories)
-          .where(eq(categories.id, cid))
-          .limit(1);
-        if (!catRow) {
-          return res.status(400).json({
-            success: false,
-            message: 'Danh mục không tồn tại. Lấy id từ API danh mục hoặc gửi categoryId: null',
-          });
-        }
-        updateData.categoryId = cid;
+        updateData.categoryId = resolved.id;
       }
     }
 

@@ -52,6 +52,24 @@ export const isInspector = (req: Request, res: Response, next: NextFunction) => 
   }
 };
 
+/**
+ * Có Bearer token hợp lệ thì gán req.user; không có / token lỗi vẫn cho qua (khách xem public).
+ * Dùng cho search / chi tiết xe: đăng nhập thì thấy thêm tin reserved của mình.
+ */
+export const optionalAuth = (req: Request, res: Response, next: NextFunction) => {
+  const token = req.headers['authorization']?.split(' ')[1];
+  if (!token) {
+    return next();
+  }
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as JwtPayload;
+    req.user = decoded;
+  } catch {
+    /* token sai → coi như khách */
+  }
+  next();
+};
+
 // Middleware kiểm tra user đã đăng nhập (bất kỳ role nào)
 export const isAuthenticated = (req: Request, res: Response, next: NextFunction) => {
   const token = req.headers['authorization']?.split(' ')[1];

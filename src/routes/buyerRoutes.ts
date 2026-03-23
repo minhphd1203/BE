@@ -14,7 +14,7 @@ import {
   sendMessageToSeller,
   getMessageWithSeller,
 } from '../controllers/buyerController';
-import { isAuthenticated } from '../middleware/authMiddleware';
+import { isAuthenticated, optionalAuth } from '../middleware/authMiddleware';
 
 const router = express.Router();
 
@@ -23,9 +23,9 @@ const router = express.Router();
  * /api/buyer/v1/bikes/recommended:
  *   get:
  *     summary: Get recommended bikes (latest approved bikes for homepage)
+ *     description: Không cần đăng nhập. Có Bearer token thì vẫn dùng được (tuỳ chọn).
  *     tags: [Buyer]
- *     security:
- *       - bearerAuth: []
+ *     security: []
  *     parameters:
  *       - in: query
  *         name: limit
@@ -36,19 +36,17 @@ const router = express.Router();
  *     responses:
  *       200:
  *         description: Recommended bikes fetched successfully
- *       401:
- *         description: Unauthorized - No token provided
  */
-router.get('/v1/bikes/recommended', isAuthenticated, getRecommendedBikes);
+router.get('/v1/bikes/recommended', optionalAuth, getRecommendedBikes);
 
 /**
  * @swagger
  * /api/buyer/v1/bikes/search:
  *   get:
  *     summary: Search bikes with filters
+ *     description: Công khai — không cần đăng nhập. Chỉ hiển thị xe approved; đã đăng nhập có thể thấy thêm xe reserved liên quan.
  *     tags: [Buyer]
- *     security:
- *       - bearerAuth: []
+ *     security: []
  *     parameters:
  *       - in: query
  *         name: brand
@@ -100,19 +98,20 @@ router.get('/v1/bikes/recommended', isAuthenticated, getRecommendedBikes);
  *     responses:
  *       200:
  *         description: Bikes searched successfully
- *       401:
- *         description: Unauthorized
  */
-router.get('/v1/bikes/search', isAuthenticated, searchBikes);
+router.get('/v1/bikes/search', optionalAuth, searchBikes);
 
 /**
  * @swagger
  * /api/buyer/v1/bikes/{bikeId}:
  *   get:
  *     summary: Get bike details by ID
+ *     description: |
+ *       Khách chỉ xem được xe **approved**.
+ *       Seller (có JWT) xem được mọi trạng thái **tin của chính mình** (pending/rejected/…).
+ *       Buyer đã đặt cọc xong có thể xem xe **reserved** của mình (giống kết quả search).
  *     tags: [Buyer]
- *     security:
- *       - bearerAuth: []
+ *     security: []
  *     parameters:
  *       - in: path
  *         name: bikeId
@@ -128,10 +127,8 @@ router.get('/v1/bikes/search', isAuthenticated, searchBikes);
  *         description: Invalid bike ID format
  *       404:
  *         description: Bike not found
- *       401:
- *         description: Unauthorized
  */
-router.get('/v1/bikes/:bikeId', isAuthenticated, getBikeDetail);
+router.get('/v1/bikes/:bikeId', optionalAuth, getBikeDetail);
 
 // ============= TRANSACTIONS =============
 

@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { db } from '../db';
 import { bikes, transactions, wishlists, reports, messages, reviews, users } from '../db/schema';
-import { desc, eq, and, ilike, lte, gte, or, inArray } from 'drizzle-orm';
+import { desc, eq, and, ilike, lte, gte, or, inArray, type SQL } from 'drizzle-orm';
 import { ApiResponse } from '../models';
 import { TRANSACTION_TYPE_OPTIONS, TRANSACTION_TYPES } from '../constants/transactionTypes';
 
@@ -11,9 +11,9 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 
 /**
  * Search bikes with filters (brand, model, price range, condition, etc.)
+ * Public: không cần JWT — ai cũng gọi được. Có token thì thêm xe reserved liên quan tài khoản.
  * Returns: minimal bike info for list view (title, price, images, status)
- * Only shows APPROVED bikes (inspector verified, then admin approved for public listing)
- * Flow: Inspector inspects first → if passed, awaits admin approval → only then shown to buyers
+ * Chỉ hiển thị xe APPROVED (đã duyệt đăng bán công khai); khách không thấy tin pending/rejected.
  * Query parameters:
  * - brand: string (partial match)
  * - model: string (partial match)
@@ -28,7 +28,7 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
  */
 export const searchBikes = async (req: Request, res: Response) => {
   try {
-    const userId = req.user!.userId;
+    const userId = req.user?.userId;
     const {
       brand,
       model,
@@ -41,16 +41,6 @@ export const searchBikes = async (req: Request, res: Response) => {
       page = 1,
       limit = 10,
     } = req.query;
-
-    // Build status filter: Show approved bikes + reserved bikes if user is seller or buyer
-    const statusFilter = or(
-      eq(bikes.status, 'approved'),
-      // Seller can see their own reserved bikes
-      and(
-        eq(bikes.status, 'reserved'),
-        eq(bikes.sellerId, userId)
-      )
-    );
 
     // Build optional filters
     const optionalFilters = [];
@@ -79,11 +69,6 @@ export const searchBikes = async (req: Request, res: Response) => {
       optionalFilters.push(ilike(bikes.color, `%${color}%`));
     }
 
-    // Combine all filters
-    const filters = optionalFilters.length > 0 
-      ? [statusFilter, ...optionalFilters]
-      : [statusFilter];
-
     // Determine sort field
     let sortField: any = bikes.createdAt;
     switch (sortBy) {
@@ -100,89 +85,48 @@ export const searchBikes = async (req: Request, res: Response) => {
         sortField = bikes.createdAt;
     }
 
-    // Get buyer's reserved bike IDs (direct from bikes table)
-    // First, get ALL reserved bikes to check against
-    const allReservedBikes = await db.query.bikes.findMany({
-      where: eq(bikes.status, 'reserved'),
-      columns: { id: true }
-    });
-    console.log('[Search] All reserved bikes:', allReservedBikes.length);
+    // Khách (chưa đăng nhập): chỉ thấy xe đã duyệt công khai (approved).
+    // Đã đăng nhập: thêm xe reserved của mình (seller) hoặc xe đã đặt cọc xong (buyer).
+    const statusFilterParts: SQL[] = [eq(bikes.status, 'approved')];
 
-    // From those reserved bikes, get IDs where user has a completed deposit
-    const myReservedBikeIds = [];
-    if (allReservedBikes.length > 0) {
-      const reservedBikeIds = allReservedBikes.map(b => b.id);
-      console.log('[Search] Reserved bike IDs to check:', reservedBikeIds);
-      
-      const myDeposits = await db.query.transactions.findMany({
-        where: and(
-          eq(transactions.buyerId, userId),
-          eq(transactions.transactionType, 'deposit'),
-          eq(transactions.status, 'completed'),
-          inArray(transactions.bikeId, reservedBikeIds)
-        ),
-        columns: { bikeId: true }
+    if (userId) {
+      const allReservedBikes = await db.query.bikes.findMany({
+        where: eq(bikes.status, 'reserved'),
+        columns: { id: true },
       });
-      console.log('[Search] My completed deposits:', myDeposits.length);
-      console.log('[Search] My deposit bike IDs:', myDeposits.map(t => t.bikeId));
-      
-      myReservedBikeIds.push(...myDeposits.map(t => t.bikeId));
-    }
 
-    // Build status filter with simpler logic
-    // Approved bikes: everyone sees
-    // Reserved bikes: only seller + only buyer who deposited
-    
-    console.log('[Search] Building filter for userId:', userId);
-    
-    // This is what we want to show:
-    // 1. All approved bikes
-    // 2. Reserved bikes WHERE (seller = me OR buyer has my deposit)
-    
-    const statusFilterParts: any[] = [
-      eq(bikes.status, 'approved') // Public approved bikes
-    ];
-    
-    // Add seller's reserved bikes
-    const sellerReservedFilter = and(
-      eq(bikes.status, 'reserved'),
-      eq(bikes.sellerId, userId)
-    );
-    if (sellerReservedFilter) {
-      statusFilterParts.push(sellerReservedFilter);
-    }
-    
-    // Add buyer's reserved bikes (those with my deposits)
-    if (myReservedBikeIds.length > 0) {
-      console.log('[Search] Adding my reserved bikes:', myReservedBikeIds);
-      const buyerReservedFilter = and(
-        eq(bikes.status, 'reserved'),
-        inArray(bikes.id, myReservedBikeIds)
-      );
-      if (buyerReservedFilter) {
-        statusFilterParts.push(buyerReservedFilter);
+      const myReservedBikeIds: string[] = [];
+      if (allReservedBikes.length > 0) {
+        const reservedBikeIds = allReservedBikes.map((b) => b.id);
+        const myDeposits = await db.query.transactions.findMany({
+          where: and(
+            eq(transactions.buyerId, userId),
+            eq(transactions.transactionType, 'deposit'),
+            eq(transactions.status, 'completed'),
+            inArray(transactions.bikeId, reservedBikeIds)
+          ),
+          columns: { bikeId: true },
+        });
+        myReservedBikeIds.push(...myDeposits.map((t) => t.bikeId));
+      }
+
+      const sellerReserved = and(eq(bikes.status, 'reserved'), eq(bikes.sellerId, userId));
+      if (sellerReserved) statusFilterParts.push(sellerReserved);
+      if (myReservedBikeIds.length > 0) {
+        const buyerReserved = and(eq(bikes.status, 'reserved'), inArray(bikes.id, myReservedBikeIds));
+        if (buyerReserved) statusFilterParts.push(buyerReserved);
       }
     }
 
-    const finalStatusFilter = or(...statusFilterParts.filter(Boolean));
-    console.log('[Search] Status filter parts:', statusFilterParts.length);
+    const finalStatusFilter = or(...statusFilterParts);
 
-    // Combine with optional filters (brand, model, price, etc.)
-    const finalFilters = optionalFilters.length > 0 
-      ? [finalStatusFilter, ...optionalFilters]
-      : [finalStatusFilter];
-    console.log('[Search] Final filters count:', finalFilters.length);
+    const finalFilters =
+      optionalFilters.length > 0 ? [finalStatusFilter, ...optionalFilters] : [finalStatusFilter];
 
     // Calculate offset for pagination
     const pageNum = parseInt(page as string) || 1;
     const limitNum = parseInt(limit as string) || 10;
     const offset = (pageNum - 1) * limitNum;
-
-    console.log('[Search] Final filters - Show:', {
-      approved: 'ALL approved bikes',
-      myReservedAsOwner: `IF sellerId = ${userId}`,
-      myReservedAsDepositBuyer: myReservedBikeIds.length > 0 ? myReservedBikeIds : 'NONE',
-    });
 
     // Fetch total count
     const countResult = await db
@@ -191,7 +135,6 @@ export const searchBikes = async (req: Request, res: Response) => {
       .where(and(...finalFilters));
 
     const total = countResult.length;
-    console.log('[Search] Total bikes matching filter:', total);
 
     // Fetch bikes with minimal info for list view
     const bikesData = await db.query.bikes.findMany({
@@ -247,13 +190,14 @@ export const searchBikes = async (req: Request, res: Response) => {
 };
 
 /**
- * Get bike details by ID
- * Shows full details of APPROVED bikes (not yet verified by inspector)
- * Verification happens after buyer decides to purchase
+ * Chi tiết tin đăng.
+ * - Khách: chỉ xe approved (đang bán công khai).
+ * - Đã đăng nhập: seller xem được mọi trạng thái tin của chính mình; buyer có thể xem xe reserved nếu đã đặt cọc xong (khớp search).
  */
 export const getBikeDetail = async (req: Request, res: Response) => {
   try {
     const bikeId = req.params.bikeId as string;
+    const userId = req.user?.userId;
 
     // Validate UUID format
     if (!UUID_REGEX.test(bikeId)) {
@@ -264,10 +208,7 @@ export const getBikeDetail = async (req: Request, res: Response) => {
     }
 
     const bike = await db.query.bikes.findFirst({
-      where: and(
-        eq(bikes.id, bikeId),
-        eq(bikes.status, 'approved')
-      ),
+      where: eq(bikes.id, bikeId),
       with: {
         seller: {
           columns: {
@@ -305,6 +246,34 @@ export const getBikeDetail = async (req: Request, res: Response) => {
     });
 
     if (!bike) {
+      return res.status(404).json({
+        success: false,
+        message: 'Bike not found or not available',
+      });
+    }
+
+    const isOwner = !!userId && bike.sellerId === userId;
+    let canView = bike.status === 'approved';
+
+    if (!canView && isOwner) {
+      canView = true;
+    }
+
+    if (!canView && userId && bike.status === 'reserved') {
+      const deposit = await db.query.transactions.findFirst({
+        where: and(
+          eq(transactions.bikeId, bikeId),
+          eq(transactions.buyerId, userId),
+          eq(transactions.transactionType, 'deposit'),
+          eq(transactions.status, 'completed')
+        ),
+      });
+      if (deposit) {
+        canView = true;
+      }
+    }
+
+    if (!canView) {
       return res.status(404).json({
         success: false,
         message: 'Bike not found or not available',

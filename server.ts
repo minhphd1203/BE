@@ -120,6 +120,7 @@ app.get('/', (req, res) => {
             },
             seller: {
                 dashboard: 'GET /api/seller/v1/dashboard',
+                categories: 'GET /api/seller/v1/categories',
                 createBike: 'POST /api/seller/v1/bikes',
                 myBikes: 'GET /api/seller/v1/bikes',
                 bikeDetail: 'GET /api/seller/v1/bikes/:id',

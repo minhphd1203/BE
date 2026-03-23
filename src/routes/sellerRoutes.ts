@@ -14,6 +14,7 @@ import {
   getMessageHistory,
   sendMessage,
   getMyReviews,
+  getCategoriesForSeller,
 } from '../controllers/sellerController';
 import { isAuthenticated, requireRole } from '../middleware/authMiddleware';
 import { parseBikeListingMultipart, parseBikeUpdateMultipart } from '../middleware/bikeUploadMiddleware';
@@ -41,6 +42,23 @@ router.use(requireRole('seller'));
  *         description: Unauthorized
  */
 router.get('/v1/dashboard', getDashboard);
+
+/**
+ * @swagger
+ * /api/seller/v1/categories:
+ *   get:
+ *     summary: Danh sách danh mục xe (dropdown đăng/sửa tin)
+ *     description: Trả về id, name, slug. Khi gửi tin có thể dùng categoryId = UUID, hoặc slug, hoặc tên khớp DB.
+ *     tags: [Seller]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Danh sách danh mục
+ *       401:
+ *         description: Unauthorized
+ */
+router.get('/v1/categories', getCategoriesForSeller);
 
 // ============= BIKE LISTINGS =============
 
@@ -71,7 +89,10 @@ router.get('/v1/dashboard', getDashboard);
  *               condition: { type: string, enum: [excellent, good, fair, poor] }
  *               mileage: { type: string }
  *               color: { type: string }
- *               categoryId: { type: string, format: uuid }
+ *               categoryId:
+ *                 type: string
+ *                 description: "UUID, slug (vd mountain-bike) hoặc tên (vd Mountain Bike). GET /api/seller/v1/categories"
+ *                 example: "mountain-bike"
  *               images:
  *                 type: string
  *                 format: binary
@@ -128,7 +149,8 @@ router.get('/v1/dashboard', getDashboard);
  *                 example: "https://youtube.com/watch?v=abc123"
  *               categoryId:
  *                 type: string
- *                 format: uuid
+ *                 description: "UUID, slug hoặc tên danh mục. GET /api/seller/v1/categories"
+ *                 example: "Road Bike"
  *     responses:
  *       201:
  *         description: Tin đăng tạo thành công, chờ admin duyệt
@@ -247,7 +269,10 @@ router.get('/v1/bikes/:id', getMyBikeDetail);
  *               condition: { type: string, enum: [excellent, good, fair, poor] }
  *               mileage: { type: string }
  *               color: { type: string }
- *               categoryId: { type: string, format: uuid }
+ *               categoryId:
+ *                 type: string
+ *                 description: "UUID, slug hoặc tên. GET /api/seller/v1/categories"
+ *                 example: "e-bikes"
  *               images:
  *                 type: string
  *                 format: binary
@@ -289,7 +314,7 @@ router.get('/v1/bikes/:id', getMyBikeDetail);
  *                 type: string
  *               categoryId:
  *                 type: string
- *                 format: uuid
+ *                 description: "UUID, slug hoặc tên danh mục"
  *     responses:
  *       200:
  *         description: Tin đăng đã cập nhật
