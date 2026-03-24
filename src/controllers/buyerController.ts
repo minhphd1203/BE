@@ -673,11 +673,32 @@ export const submitReport = async (req: Request, res: Response) => {
       });
     }
 
+    // If reporting a bike, fetch the seller ID from the bike
+    let finalReportedUserId = reportedUserId || null;
+    
+    if (reportedBikeId) {
+      const bike = await db.query.bikes.findFirst({
+        where: eq(bikes.id, reportedBikeId),
+        columns: {
+          sellerId: true,
+        },
+      });
+
+      if (!bike) {
+        return res.status(404).json({
+          success: false,
+          message: 'Xe không tồn tại',
+        });
+      }
+
+      finalReportedUserId = bike.sellerId;
+    }
+
     const [newReport] = await db
       .insert(reports)
       .values({
         reporterId,
-        reportedUserId: reportedUserId || null,
+        reportedUserId: finalReportedUserId,
         reportedBikeId: reportedBikeId || null,
         reason,
         description,
@@ -694,6 +715,70 @@ export const submitReport = async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       message: 'Lỗi khi gửi báo cáo',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
+ * GET /api/buyer/v1/reports
+ * Buyer xem danh sách các báo cáo mà họ đã tạo.
+ */
+export const getMyReports = async (req: Request, res: Response) => {
+  try {
+    const reporterId = req.user!.userId;
+    const { status, page = 1, limit = 10 } = req.query;
+
+    const filters: any[] = [eq(reports.reporterId, reporterId)];
+    if (status) filters.push(eq(reports.status, status as string));
+
+    const pageNum = parseInt(page as string) || 1;
+    const limitNum = parseInt(limit as string) || 10;
+    const offset = (pageNum - 1) * limitNum;
+
+    const countResult = await db.select({ id: reports.id }).from(reports).where(and(...filters));
+    const total = countResult.length;
+
+    const myReports = await db.query.reports.findMany({
+      where: and(...filters),
+      with: {
+        reportedUser: {
+          columns: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+        reportedBike: {
+          columns: {
+            id: true,
+            title: true,
+            brand: true,
+            model: true,
+          },
+        },
+        resolver: {
+          columns: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+      orderBy: [desc(reports.createdAt)],
+      limit: limitNum,
+      offset,
+    });
+
+    res.status(200).json({
+      success: true,
+      data: myReports,
+      message: 'Danh sách báo cáo fetched successfully',
+      meta: { total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi khi lấy danh sách báo cáo',
       error: error instanceof Error ? error.message : 'Unknown error',
     });
   }

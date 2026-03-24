@@ -10,6 +10,7 @@ import {
   addToWishlist,
   removeFromWishlist,
   submitReport,
+  getMyReports,
   addReview,
   sendMessageToSeller,
   getMessageWithSeller,
@@ -393,6 +394,67 @@ router.delete('/v1/wishlist/:bikeId', isAuthenticated, removeFromWishlist);
  *         description: Unauthorized
  */
 router.post('/v1/reports', isAuthenticated, submitReport);
+
+/**
+ * @swagger
+ * /api/buyer/v1/reports:
+ *   get:
+ *     summary: Xem danh sách báo cáo của buyer
+ *     tags: [Buyer]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *         description: Lọc theo trạng thái (pending, resolved)
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Trang thứ mấy
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: Số báo cáo trên một trang
+ *     responses:
+ *       200:
+ *         description: Danh sách báo cáo của buyer
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     properties:
+ *                       id:
+ *                         type: string
+ *                       reason:
+ *                         type: string
+ *                       description:
+ *                         type: string
+ *                       status:
+ *                         type: string
+ *                       reportedUser:
+ *                         type: object
+ *                       reportedBike:
+ *                         type: object
+ *                       resolution:
+ *                         type: string
+ *                       createdAt:
+ *                         type: string
+ *       401:
+ *         description: Unauthorized
+ */
+router.get('/v1/reports', isAuthenticated, getMyReports);
 
 // ============= REVIEWS =============
 
