@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import crypto from 'crypto';
+import QRCode from 'qrcode';
 import { db } from '../db';
 import { transactions, bikes } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
@@ -41,6 +42,23 @@ function verifyVNPaySignature(params: Record<string, string>): boolean {
   const hmac = crypto.createHmac('sha512', secret);
   const calculatedHash = hmac.update(Buffer.from(hashData, 'utf-8')).digest('hex');
   return calculatedHash === receivedHash;
+}
+
+// ============= QR CODE GENERATION =============
+
+async function generateQRCode(text: string): Promise<string> {
+  try {
+    const qrCode = await QRCode.toDataURL(text, {
+      errorCorrectionLevel: 'H',
+      type: 'image/png',
+      margin: 1,
+      width: 300,
+    });
+    return qrCode;
+  } catch (error) {
+    console.error('Lỗi khi tạo QR code:', error);
+    throw error;
+  }
 }
 
 // ============= TẠO PAYMENT URL =============
@@ -106,15 +124,23 @@ export const createPaymentUrl = async (req: Request, res: Response) => {
 
     const paymentUrl = buildVNPayUrl(params);
 
+    // Generate QR code from payment URL
+    const qrCode = await generateQRCode(paymentUrl);
+
+    // Calculate expiration: 10 minutes from now
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
     res.status(200).json({
       success: true,
       data: {
         paymentUrl,
+        qrCode,
         transactionId,
         amount: transaction.amount,
         orderInfo,
+        expiresAt,
       },
-      message: 'URL thanh toán đã được tạo. Redirect buyer đến paymentUrl.',
+      message: 'URL thanh toán đã được tạo. QR code hết hạn sau 10 phút.',
     });
   } catch (error) {
     res.status(500).json({
@@ -270,18 +296,26 @@ export const createRemainingPaymentUrl = async (req: Request, res: Response) => 
 
     const paymentUrl = buildVNPayUrl(params);
 
+    // Generate QR code from payment URL
+    const qrCode = await generateQRCode(paymentUrl);
+
+    // Calculate expiration: 10 minutes from now
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
     res.status(200).json({
       success: true,
       data: {
         paymentUrl,
+        qrCode,
         remainingTransactionId: remainingTransaction.id,
         depositTransactionId: depositTransaction.id,
         remainingBalance: depositTransaction.remainingBalance,
         orderInfo,
         depositAmount: depositTransaction.amount,
         totalPrice: depositTransaction.amount + depositTransaction.remainingBalance,
+        expiresAt,
       },
-      message: 'URL thanh toán còn lại đã được tạo. Redirect buyer đến paymentUrl.',
+      message: 'URL thanh toán còn lại đã được tạo. QR code hết hạn sau 10 phút.',
     });
   } catch (error) {
     res.status(500).json({
@@ -394,6 +428,18 @@ export const vnpayIPN = async (req: Request, res: Response) => {
     if (!transaction) {
       console.log('[VNPay IPN] ❌ Transaction not found for txnRef:', txnRef);
       return res.json({ RspCode: '01', Message: 'Order not found' });
+    }
+
+    // Bước 2b: Kiểm tra hết hạn (10 phút)
+    const createdAt = new Date(transaction.createdAt);
+    const expiresAt = new Date(createdAt.getTime() + 10 * 60 * 1000);
+    const now = new Date();
+    
+    console.log('[VNPay IPN] Expiration check - createdAt:', createdAt, 'expiresAt:', expiresAt, 'now:', now);
+    
+    if (now > expiresAt) {
+      console.log('[VNPay IPN] ❌ Payment URL expired');
+      return res.json({ RspCode: '98', Message: 'Payment URL expired (10 minute timeout)' });
     }
 
     // Bước 3: Kiểm tra số tiền

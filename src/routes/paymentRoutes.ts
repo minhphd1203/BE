@@ -48,6 +48,11 @@ const router = express.Router();
  *                     paymentUrl:
  *                       type: string
  *                       example: "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?..."
+ *                     qrCode:
+ *                       type: string
+ *                       format: base64
+ *                       description: "Base64 encoded QR code image (PNG) of the payment URL for scanning"
+ *                       example: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA..."
  *                     transactionId:
  *                       type: string
  *                       format: uuid
@@ -57,6 +62,11 @@ const router = express.Router();
  *                     orderInfo:
  *                       type: string
  *                       example: "Thanh toan xe dap Trek Domane - Ma GD: A1B2C3D4"
+ *                     expiresAt:
+ *                       type: string
+ *                       format: date-time
+ *                       description: "QR code and payment URL expire after 10 minutes"
+ *                       example: "2026-03-24T20:25:00.000Z"
  *       400:
  *         description: Giao dịch không ở trạng thái pending
  *       404:
@@ -221,6 +231,11 @@ router.get('/v1/status/:transactionId', isAuthenticated, getPaymentStatus);
  *                     paymentUrl:
  *                       type: string
  *                       example: "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?..."
+ *                     qrCode:
+ *                       type: string
+ *                       format: base64
+ *                       description: "Base64 encoded QR code image (PNG) of the payment URL for scanning"
+ *                       example: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA..."
  *                     remainingTransactionId:
  *                       type: string
  *                       format: uuid
@@ -237,6 +252,11 @@ router.get('/v1/status/:transactionId', isAuthenticated, getPaymentStatus);
  *                     totalPrice:
  *                       type: number
  *                       example: 20000000
+ *                     expiresAt:
+ *                       type: string
+ *                       format: date-time
+ *                       description: "QR code and payment URL expire after 10 minutes"
+ *                       example: "2026-03-24T20:25:00.000Z"
  *       400:
  *         description: Transaction không phải là deposit hoặc chưa thanh toán
  *       404:
