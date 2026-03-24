@@ -11,6 +11,7 @@ import {
   removeFromWishlist,
   submitReport,
   getMyReports,
+  getSellerBikesForReport,
   addReview,
   sendMessageToSeller,
   getMessageWithSeller,
@@ -354,6 +355,60 @@ router.post('/v1/wishlist/:bikeId', isAuthenticated, addToWishlist);
 router.delete('/v1/wishlist/:bikeId', isAuthenticated, removeFromWishlist);
 
 // ============= REPORTS =============
+
+/**
+ * @swagger
+ * /api/buyer/v1/sellers/{sellerId}/bikes:
+ *   get:
+ *     summary: Lấy danh sách xe của seller để chọn khi báo cáo
+ *     tags: [Buyer]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: sellerId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: ID của seller cần báo cáo
+ *     responses:
+ *       200:
+ *         description: Danh sách xe của seller
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     seller:
+ *                       type: object
+ *                       properties:
+ *                         id:
+ *                           type: string
+ *                         name:
+ *                           type: string
+ *                     bikes:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id:
+ *                             type: string
+ *                           title:
+ *                             type: string
+ *                           brand:
+ *                             type: string
+ *                           condition:
+ *                             type: string
+ *       404:
+ *         description: Seller không tồn tại
+ */
+router.get('/v1/sellers/:sellerId/bikes', isAuthenticated, getSellerBikesForReport);
 
 /**
  * @swagger

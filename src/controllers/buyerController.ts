@@ -654,6 +654,66 @@ export const removeFromWishlist = async (req: Request, res: Response) => {
 // ============= REPORTS =============
 
 /**
+ * GET /api/buyer/v1/sellers/:sellerId/bikes
+ * Fetch all bikes from a seller for the report form.
+ * Allows buyer to choose which bike has violation when reporting seller.
+ */
+export const getSellerBikesForReport = async (req: Request, res: Response) => {
+  try {
+    const sellerId = req.params.sellerId as string;
+
+    if (!UUID_REGEX.test(sellerId)) {
+      return res.status(400).json({ success: false, message: 'ID seller không đúng định dạng' });
+    }
+
+    // Verify seller exists
+    const seller = await db.query.users.findFirst({
+      where: eq(users.id, sellerId),
+      columns: { id: true, name: true },
+    });
+
+    if (!seller) {
+      return res.status(404).json({ success: false, message: 'Seller không tồn tại' });
+    }
+
+    // Fetch all bikes from this seller
+    const sellerBikes = await db.query.bikes.findMany({
+      where: eq(bikes.sellerId, sellerId),
+      columns: {
+        id: true,
+        title: true,
+        brand: true,
+        model: true,
+        year: true,
+        price: true,
+        condition: true,
+        status: true,
+        createdAt: true,
+      },
+      orderBy: [desc(bikes.createdAt)],
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        seller: {
+          id: seller.id,
+          name: seller.name,
+        },
+        bikes: sellerBikes,
+      },
+      message: 'Seller bikes fetched successfully',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi khi lấy danh sách xe của seller',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
  * POST /api/buyer/v1/reports
  * Buyer báo cáo vi phạm (xe hoặc người dùng).
  */

@@ -369,9 +369,10 @@ router.get('/v1/report', isAdmin, getAllReports);
  *               resolution:
  *                 type: string
  *                 description: Resolution description
- *               refundAmount:
- *                 type: number
- *                 nullable: true
+ *               status:
+ *                 type: string
+ *                 enum: [resolved, rejected]
+ *                 description: Status of the report
  *     responses:
  *       200:
  *         description: Report resolved successfully
