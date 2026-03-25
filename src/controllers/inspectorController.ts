@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { db } from '../db';
-import { bikes, inspections, users, categories } from '../db/schema';
+import { bikes, inspections, users, categories, messages } from '../db/schema';
 import { eq, desc, and, or, sql } from 'drizzle-orm';
 import { InspectionFormData, ApiResponse } from '../models';
 import {
@@ -912,6 +912,75 @@ export const sendMessageToUser = async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       message: 'Error sending message',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+};
+
+// ============= CLOSE CONVERSATION =============
+
+/**
+ * Close a conversation with a buyer/seller/admin
+ * Once closed, they can no longer send messages to this inspector
+ */
+export const closeConversation = async (req: Request, res: Response) => {
+  try {
+    const inspectorId = req.user?.userId;
+    const userId = req.params.userId as string; // Buyer, seller, or admin ID
+
+    if (!inspectorId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized'
+      });
+    }
+
+    // Find all messages in this conversation
+    const conversationMessages = await db.query.messages.findMany({
+      where: or(
+        and(eq(messages.senderId, inspectorId), eq(messages.receiverId, userId)),
+        and(eq(messages.senderId, userId), eq(messages.receiverId, inspectorId))
+      ),
+    });
+
+    if (conversationMessages.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No conversation found with this user'
+      });
+    }
+
+    // Update all messages in this conversation to closed status
+    await db
+      .update(messages)
+      .set({
+        conversationStatus: 'closed',
+        conversationClosedAt: new Date(),
+        conversationClosedBy: inspectorId,
+      })
+      .where(
+        or(
+          and(eq(messages.senderId, inspectorId), eq(messages.receiverId, userId)),
+          and(eq(messages.senderId, userId), eq(messages.receiverId, inspectorId))
+        )
+      );
+
+    const response: ApiResponse = {
+      success: true,
+      data: {
+        userId,
+        conversationStatus: 'closed',
+        totalMessagesInConversation: conversationMessages.length,
+        closedAt: new Date(),
+      },
+      message: 'Conversation closed successfully. User can no longer send messages.'
+    };
+
+    res.status(200).json(response);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error closing conversation',
       error: error instanceof Error ? error.message : 'Unknown error'
     });
   }

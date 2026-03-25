@@ -8,7 +8,8 @@ import {
   getMyInspections,
   getInspectionDetail,
   updateInspection,
-  sendMessageToUser
+  sendMessageToUser,
+  closeConversation
 } from '../controllers/inspectorController';
 import { isInspector } from '../middleware/authMiddleware';
 import {
@@ -406,5 +407,54 @@ router.put('/v1/inspections/:inspectionId', isInspector, parseInspectionUpdateMu
  *         description: Unauthorized - Inspector role required
  */
 router.post('/v1/messages/:userId', isInspector, messageUpload, attachFileUrl, sendMessageToUser);
+
+/**
+ * @swagger
+ * /api/inspector/v1/conversations/{userId}/close:
+ *   put:
+ *     summary: Close a conversation with user (buyer/seller/admin)
+ *     tags: [Inspector - Conversations]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: ID of user to close conversation with
+ *     responses:
+ *       200:
+ *         description: Conversation closed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     userId:
+ *                       type: string
+ *                       format: uuid
+ *                     conversationStatus:
+ *                       type: string
+ *                       enum: [closed]
+ *                     totalMessagesInConversation:
+ *                       type: integer
+ *                     closedAt:
+ *                       type: string
+ *                       format: date-time
+ *                 message:
+ *                   type: string
+ *       404:
+ *         description: Conversation not found
+ *       401:
+ *         description: Unauthorized - Inspector role required
+ */
+router.put('/v1/conversations/:userId/close', isInspector, closeConversation);
 
 export default router;
