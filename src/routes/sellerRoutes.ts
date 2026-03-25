@@ -9,6 +9,7 @@ import {
   deleteBike,
   resubmitBike,
   getMyTransactions,
+  getMyTransactionById,
   updateTransactionStatus,
   getConversations,
   getMessageHistory,
@@ -449,8 +450,37 @@ router.get('/v1/transactions', getMyTransactions);
 /**
  * @swagger
  * /api/seller/v1/transactions/{id}:
+ *   get:
+ *     summary: Chi tiết một giao dịch (đơn của seller)
+ *     tags: [Seller]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: Chi tiết giao dịch (kèm bike, buyer)
+ *       404:
+ *         description: Không tìm thấy giao dịch
+ *       401:
+ *         description: Unauthorized
+ */
+router.get('/v1/transactions/:id', getMyTransactionById);
+
+/**
+ * @swagger
+ * /api/seller/v1/transactions/{id}:
  *   put:
- *     summary: Xác nhận bán (completed) hoặc hủy (cancelled) đơn đặt mua
+ *     summary: Phê duyệt đơn (approved) hoặc hủy (cancelled)
+ *     description: |
+ *       - **pending → approved:** Seller chấp nhận đơn; buyer mới được thanh toán (VNPay).
+ *       - **pending | approved → cancelled:** Hủy đơn trước khi thanh toán xong.
+ *       - **completed** không gửi từ đây: hệ thống gán sau khi thanh toán thành công (IPN).
  *     tags: [Seller]
  *     security:
  *       - bearerAuth: []
@@ -471,15 +501,15 @@ router.get('/v1/transactions', getMyTransactions);
  *             properties:
  *               status:
  *                 type: string
- *                 enum: [completed, cancelled]
+ *                 enum: [approved, cancelled]
  *               notes:
  *                 type: string
- *                 example: "Đã giao xe, giao dịch hoàn tất"
+ *                 example: "Đồng ý bán, vui lòng thanh toán"
  *     responses:
  *       200:
  *         description: Giao dịch đã cập nhật
  *       400:
- *         description: Trạng thái không hợp lệ hoặc giao dịch không ở pending
+ *         description: Trạng thái không hợp lệ hoặc chuyển trạng thái không được phép
  *       404:
  *         description: Không tìm thấy giao dịch
  *       401:

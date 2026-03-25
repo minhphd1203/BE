@@ -837,6 +837,57 @@ export const getMyTransactions = async (req: Request, res: Response) => {
 };
 
 /**
+ * GET /api/seller/v1/transactions/:id
+ * Chi tiết một giao dịch (chỉ khi thuộc seller đang đăng nhập).
+ */
+export const getMyTransactionById = async (req: Request, res: Response) => {
+  try {
+    const sellerId = req.user!.userId;
+    const { id } = req.params as { id: string };
+
+    if (!UUID_REGEX.test(id)) {
+      return res.status(400).json({ success: false, message: 'ID giao dịch không đúng định dạng' });
+    }
+
+    const row = await db.query.transactions.findFirst({
+      where: and(eq(transactions.id, id), eq(transactions.sellerId, sellerId)),
+      with: {
+        bike: {
+          columns: {
+            id: true,
+            title: true,
+            brand: true,
+            model: true,
+            price: true,
+            images: true,
+            status: true,
+          },
+        },
+        buyer: {
+          columns: { id: true, name: true, email: true, phone: true, avatar: true },
+        },
+      },
+    });
+
+    if (!row) {
+      return res.status(404).json({ success: false, message: 'Không tìm thấy giao dịch' });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: row,
+      message: 'Chi tiết giao dịch fetched successfully',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi khi lấy chi tiết giao dịch',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
  * PUT /api/seller/v1/transactions/:id
  * Seller cập nhật trạng thái giao dịch trong workflow phê duyệt & thanh toán.
  * 

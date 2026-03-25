@@ -18,16 +18,15 @@ function dateFormat(date: Date): string {
 
 function buildVNPayUrl(params: Record<string, string>): string {
   const secret = process.env.VNP_SECRET!;
-  // Sort keys alphabetically
+  // Sort keys alphabetically (VNPay spec)
   const sortedKeys = Object.keys(params).sort();
-
-  const encoded = sortedKeys.map(k => `${k}=${encodeURIComponent(params[k])}`);
-
-  const hashData = encoded.join('&');
-  const queryString = encoded.join('&');
-  // Sign
+  // Chuỗi ký HMAC: key=value nối &, GIÁ TRỊ KHÔNG URL-encode (VNPay so khớp trên bản raw).
+  // Trước đây dùng encodeURIComponent cho cả hash → sai chữ ký (mã 70) trên cổng VNPay.
+  const hashData = sortedKeys.map((k) => `${k}=${params[k]}`).join('&');
   const hmac = crypto.createHmac('sha512', secret);
   const secureHash = hmac.update(Buffer.from(hashData, 'utf-8')).digest('hex');
+  // URL gửi trình duyệt: mới encode từng value theo chuẩn query string
+  const queryString = sortedKeys.map((k) => `${k}=${encodeURIComponent(params[k])}`).join('&');
   return `${VNPAY_URL}?${queryString}&vnp_SecureHash=${secureHash}`;
 }
 
