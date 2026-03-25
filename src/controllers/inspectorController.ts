@@ -791,3 +791,128 @@ export const updateInspection = async (req: Request, res: Response) => {
     });
   }
 };
+
+// ============= MESSAGING =============
+
+/**
+ * POST /api/inspector/v1/messages/:userId
+ * Inspector sends a message to any user (buyer/seller/admin)
+ * Unrestricted: Inspector can freely initiate conversations with anyone (same as admin)
+ */
+export const sendMessageToUser = async (req: Request, res: Response) => {
+  try {
+    const inspectorId = req.user?.userId;
+    const userId = req.params.userId as string;
+    const { content, bikeId } = req.body;
+    const fileUrl = (req as any).fileUrl || null; // From messageUpload middleware
+
+    if (!inspectorId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized'
+      });
+    }
+
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    if (!UUID_REGEX.test(userId)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid user ID format' 
+      });
+    }
+
+    if (!content || content.trim() === '') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Message content cannot be empty' 
+      });
+    }
+
+    if (userId === inspectorId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Cannot send message to yourself' 
+      });
+    }
+
+    // Verify receiver exists
+    const [receiverRow] = await db
+      .select({ id: users.id, name: users.name, role: users.role })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    if (!receiverRow) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'User not found' 
+      });
+    }
+
+    // Validate bikeId if provided
+    let resolvedBikeId: string | null = null;
+    if (bikeId !== undefined && bikeId !== null && bikeId !== '') {
+      const bid = String(bikeId);
+      if (!UUID_REGEX.test(bid)) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Invalid bikeId format' 
+        });
+      }
+
+      const [bikeRow] = await db
+        .select({ id: bikes.id })
+        .from(bikes)
+        .where(eq(bikes.id, bid))
+        .limit(1);
+
+      if (!bikeRow) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Bike not found' 
+        });
+      }
+
+      resolvedBikeId = bid;
+    }
+
+    // Import messages table at runtime to avoid circular import
+    const { messages } = await import('../db/schema');
+
+    // Create message (unrestricted - inspector can freely message anyone)
+    const [newMessage] = await db
+      .insert(messages)
+      .values({
+        senderId: inspectorId,
+        receiverId: userId,
+        bikeId: resolvedBikeId,
+        content: content.trim(),
+        fileUrl: fileUrl,
+        isRead: false,
+        conversationStatus: 'active', // Default to active
+      })
+      .returning();
+
+    const response: ApiResponse = {
+      success: true,
+      data: {
+        ...newMessage,
+        receiver: {
+          id: receiverRow.id,
+          name: receiverRow.name,
+          role: receiverRow.role
+        }
+      },
+      message: `Message sent successfully to ${receiverRow.name}`
+    };
+
+    res.status(201).json(response);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error sending message',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+};

@@ -82,13 +82,25 @@ export const inspections = pgTable('inspections', {
   updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
 });
 
+// Report Reasons table (violation types)
+export const reportReasons = pgTable('report_reasons', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: varchar('name', { length: 255 }).notNull().unique(),
+  description: text('description'),
+  isSystemAutoResolvable: boolean('is_system_auto_resolvable').notNull().default(false),
+  autoResolveAction: varchar('auto_resolve_action', { length: 100 }), // 'delete_bike', 'refund', etc.
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
+});
+
 // Report table
 export const reports = pgTable('reports', {
   id: uuid('id').primaryKey().defaultRandom(),
   reporterId: uuid('reporter_id').notNull().references(() => users.id),
   reportedUserId: uuid('reported_user_id').references(() => users.id),
   reportedBikeId: uuid('reported_bike_id').references(() => bikes.id),
-  reason: varchar('reason', { length: 255 }).notNull(),
+  reasonId: uuid('reason_id').references(() => reportReasons.id), // NULL if "Others"
+  reasonText: text('reason_text'), // Used when reasonId is NULL (Others option)
   description: text('description').notNull(),
   status: varchar('status', { length: 50 }).notNull().default('pending'), // pending, resolved, rejected
   resolution: text('resolution'),
@@ -114,6 +126,12 @@ export const messages = pgTable('messages', {
   bikeId: uuid('bike_id').references(() => bikes.id), // context bike (optional)
   content: text('content').notNull(),
   isRead: boolean('is_read').notNull().default(false),
+  // File attachment (image/document URL - optional)
+  fileUrl: text('file_url'), // nullable, stores uploaded file URL
+  // Conversation status: allows admin/inspector to close conversations with buyers/sellers
+  conversationStatus: varchar('conversation_status', { length: 50 }).notNull().default('active'), // 'active' or 'closed'
+  conversationClosedAt: timestamp('conversation_closed_at'), // When conversation was closed
+  conversationClosedBy: uuid('conversation_closed_by').references(() => users.id), // Who closed it (admin/inspector)
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
@@ -146,6 +164,10 @@ export const usersRelations = relations(users, ({ many }) => ({
 
 export const categoriesRelations = relations(categories, ({ many }) => ({
   bikes: many(bikes),
+}));
+
+export const reportReasonsRelations = relations(reportReasons, ({ many }) => ({
+  reports: many(reports),
 }));
 
 export const bikesRelations = relations(bikes, ({ one, many }) => ({
@@ -195,6 +217,10 @@ export const reportsRelations = relations(reports, ({ one }) => ({
   reportedBike: one(bikes, {
     fields: [reports.reportedBikeId],
     references: [bikes.id],
+  }),
+  reason: one(reportReasons, {
+    fields: [reports.reasonId],
+    references: [reportReasons.id],
   }),
   resolver: one(users, {
     fields: [reports.resolvedBy],

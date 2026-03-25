@@ -1069,6 +1069,7 @@ export const sendMessage = async (req: Request, res: Response) => {
     const sellerId = req.user!.userId;
     const { partnerId } = req.params as { partnerId: string };
     const { content, bikeId } = req.body;
+    const fileUrl = (req as any).fileUrl || null; // From messageUpload middleware
 
     if (!UUID_REGEX.test(partnerId)) {
       return res.status(400).json({ success: false, message: 'ID người nhận không đúng định dạng' });
@@ -1082,9 +1083,53 @@ export const sendMessage = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Không thể gửi tin nhắn cho chính mình' });
     }
 
-    const [receiver] = await db.select({ id: users.id }).from(users).where(eq(users.id, partnerId)).limit(1);
+    const [receiver] = await db.select({ id: users.id, role: users.role }).from(users).where(eq(users.id, partnerId)).limit(1);
     if (!receiver) {
       return res.status(400).json({ success: false, message: 'Người nhận không tồn tại trong hệ thống' });
+    }
+
+    // Check if receiver is admin/inspector - they can only be messaged in active conversations
+    if (['admin', 'inspector'].includes(receiver.role)) {
+      const existingConversation = await db.query.messages.findFirst({
+        where: or(
+          and(eq(messages.senderId, sellerId), eq(messages.receiverId, partnerId)),
+          and(eq(messages.senderId, partnerId), eq(messages.receiverId, sellerId))
+        ),
+      });
+
+      // No existing conversation = cannot initiate
+      if (!existingConversation) {
+        return res.status(403).json({
+          success: false,
+          message: 'You cannot initiate messages to admin/inspector. You can only reply to their messages.'
+        });
+      }
+
+      // Conversation exists but closed = cannot reply
+      if (existingConversation.conversationStatus === 'closed') {
+        return res.status(403).json({
+          success: false,
+          message: 'This conversation has been closed. You cannot send messages.'
+        });
+      }
+    } else {
+      // For non-admin/inspector: check if conversation is closed
+      const closedConversation = await db.query.messages.findFirst({
+        where: and(
+          or(
+            and(eq(messages.senderId, sellerId), eq(messages.receiverId, partnerId)),
+            and(eq(messages.senderId, partnerId), eq(messages.receiverId, sellerId))
+          ),
+          eq(messages.conversationStatus, 'closed')
+        ),
+      });
+
+      if (closedConversation) {
+        return res.status(403).json({
+          success: false,
+          message: 'This conversation has been closed. You cannot send messages.'
+        });
+      }
     }
 
     let resolvedBikeId: string | null = null;
@@ -1120,7 +1165,9 @@ export const sendMessage = async (req: Request, res: Response) => {
         receiverId: partnerId,
         bikeId: resolvedBikeId,
         content: content.trim(),
+        fileUrl: fileUrl,
         isRead: false,
+        conversationStatus: 'active', // Default to active
       })
       .returning();
 

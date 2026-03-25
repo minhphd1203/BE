@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { db } from '../db';
-import { bikes, transactions, wishlists, reports, messages, reviews, users } from '../db/schema';
+import { bikes, transactions, wishlists, reports, messages, reviews, users, reportReasons } from '../db/schema';
 import { desc, eq, and, ilike, lte, gte, or, inArray, type SQL } from 'drizzle-orm';
 import { ApiResponse } from '../models';
 import { TRANSACTION_TYPE_OPTIONS, TRANSACTION_TYPES } from '../constants/transactionTypes';
@@ -676,9 +676,12 @@ export const getSellerBikesForReport = async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Seller không tồn tại' });
     }
 
-    // Fetch all bikes from this seller
+    // Fetch only APPROVED bikes from this seller (for report selection)
     const sellerBikes = await db.query.bikes.findMany({
-      where: eq(bikes.sellerId, sellerId),
+      where: and(
+        eq(bikes.sellerId, sellerId),
+        eq(bikes.status, 'approved') // Only available bikes can be reported
+      ),
       columns: {
         id: true,
         title: true,
@@ -714,22 +717,84 @@ export const getSellerBikesForReport = async (req: Request, res: Response) => {
 };
 
 /**
+ * GET /api/buyer/v1/report-reasons
+ * Buyer fetches available report violation types for the report form dropdown
+ */
+export const getReportReasons = async (req: Request, res: Response) => {
+  try {
+    const reasons = await db.query.reportReasons.findMany({
+      columns: {
+        id: true,
+        name: true,
+        description: true,
+        isSystemAutoResolvable: true,
+      },
+      orderBy: [desc(reportReasons.createdAt)],
+    });
+
+    // Add "Others" option for violations outside system scope
+    const reasonsWithOthers = [
+      ...reasons,
+      {
+        id: 'others',
+        name: 'Others (Khác)',
+        description: 'Loại vi phạm khác không có trong danh sách (vui lòng mô tả chi tiết trong phần mô tả)',
+        isSystemAutoResolvable: false,
+      },
+    ];
+
+    res.status(200).json({
+      success: true,
+      data: reasonsWithOthers,
+      message: 'Report reasons fetched successfully',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi khi lấy danh sách loại vi phạm',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
  * POST /api/buyer/v1/reports
  * Buyer báo cáo vi phạm (xe hoặc người dùng).
  */
 export const submitReport = async (req: Request, res: Response) => {
   try {
     const reporterId = req.user!.userId;
-    const { reportedUserId, reportedBikeId, reason, description } = req.body;
+    const { reportedUserId, reportedBikeId, reasonId, reasonText, description } = req.body;
 
-    if (!reason || !description) {
-      return res.status(400).json({ success: false, message: 'Thiếu thông tin bắt buộc: reason, description' });
+    // Validate: reasonId must be provided
+    if (!reasonId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Chọn loại vi phạm (reasonId) là bắt buộc' 
+      });
+    }
+
+    if (!description) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Mô tả chi tiết (description) là bắt buộc' 
+      });
     }
 
     if (!reportedUserId && !reportedBikeId) {
       return res.status(400).json({
         success: false,
         message: 'Phải cung cấp ít nhất reportedUserId hoặc reportedBikeId',
+      });
+    }
+
+    // Check if reasonId is "others" (special case for violations outside system)
+    const isOthers = reasonId === 'others';
+    
+    if (isOthers && !reasonText) {
+      return res.status(400).json({
+        success: false,
+        message: 'Nếu chọn "Others", phải cung cấp reasonText (mô tả vi phạm)',
       });
     }
 
@@ -754,13 +819,31 @@ export const submitReport = async (req: Request, res: Response) => {
       finalReportedUserId = bike.sellerId;
     }
 
+    // If not "others", validate that reasonId exists in database
+    let actualReasonId = null;
+    if (!isOthers) {
+      const reason = await db.query.reportReasons.findFirst({
+        where: eq(reportReasons.id, reasonId),
+      });
+
+      if (!reason) {
+        return res.status(400).json({
+          success: false,
+          message: 'Loại vi phạm không hợp lệ',
+        });
+      }
+
+      actualReasonId = reasonId;
+    }
+
     const [newReport] = await db
       .insert(reports)
       .values({
         reporterId,
         reportedUserId: finalReportedUserId,
         reportedBikeId: reportedBikeId || null,
-        reason,
+        reasonId: actualReasonId,
+        reasonText: reasonText || null,
         description,
         status: 'pending',
       })
@@ -928,6 +1011,7 @@ export const sendMessageToSeller = async (req: Request, res: Response) => {
     const buyerId = req.user!.userId;
     const sellerId = req.params.sellerId as string;
     const { content, bikeId } = req.body;
+    const fileUrl = (req as any).fileUrl || null; // From messageUpload middleware
 
     if (!UUID_REGEX.test(sellerId)) {
       return res.status(400).json({ success: false, message: 'ID seller không đúng định dạng' });
@@ -941,9 +1025,53 @@ export const sendMessageToSeller = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Không thể gửi tin nhắn cho chính mình' });
     }
 
-    const [sellerRow] = await db.select({ id: users.id }).from(users).where(eq(users.id, sellerId)).limit(1);
+    const [sellerRow] = await db.select({ id: users.id, role: users.role }).from(users).where(eq(users.id, sellerId)).limit(1);
     if (!sellerRow) {
       return res.status(400).json({ success: false, message: 'Seller không tồn tại trong hệ thống' });
+    }
+
+    // Check if receiver is admin/inspector - they can only be messaged in active conversations
+    if (['admin', 'inspector'].includes(sellerRow.role)) {
+      const existingConversation = await db.query.messages.findFirst({
+        where: or(
+          and(eq(messages.senderId, buyerId), eq(messages.receiverId, sellerId)),
+          and(eq(messages.senderId, sellerId), eq(messages.receiverId, buyerId))
+        ),
+      });
+
+      // No existing conversation = cannot initiate
+      if (!existingConversation) {
+        return res.status(403).json({
+          success: false,
+          message: 'You cannot initiate messages to admin/inspector. You can only reply to their messages.'
+        });
+      }
+
+      // Conversation exists but closed = cannot reply
+      if (existingConversation.conversationStatus === 'closed') {
+        return res.status(403).json({
+          success: false,
+          message: 'This conversation has been closed. You cannot send messages.'
+        });
+      }
+    } else {
+      // For non-admin/inspector: check if conversation is closed
+      const closedConversation = await db.query.messages.findFirst({
+        where: and(
+          or(
+            and(eq(messages.senderId, buyerId), eq(messages.receiverId, sellerId)),
+            and(eq(messages.senderId, sellerId), eq(messages.receiverId, buyerId))
+          ),
+          eq(messages.conversationStatus, 'closed')
+        ),
+      });
+
+      if (closedConversation) {
+        return res.status(403).json({
+          success: false,
+          message: 'This conversation has been closed. You cannot send messages.'
+        });
+      }
     }
 
     let resolvedBikeId: string | null = null;
@@ -979,7 +1107,9 @@ export const sendMessageToSeller = async (req: Request, res: Response) => {
         receiverId: sellerId,
         bikeId: resolvedBikeId,
         content: content.trim(),
+        fileUrl: fileUrl,
         isRead: false,
+        conversationStatus: 'active', // Default to active
       })
       .returning();
 

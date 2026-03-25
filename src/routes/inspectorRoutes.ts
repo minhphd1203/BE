@@ -7,13 +7,15 @@ import {
   submitInspection,
   getMyInspections,
   getInspectionDetail,
-  updateInspection
+  updateInspection,
+  sendMessageToUser
 } from '../controllers/inspectorController';
 import { isInspector } from '../middleware/authMiddleware';
 import {
   parseInspectionSubmitMultipart,
   parseInspectionUpdateMultipart,
 } from '../middleware/inspectionUploadMiddleware';
+import { messageUpload, attachFileUrl } from '../middleware/messageUploadMiddleware';
 
 const router = express.Router();
 
@@ -293,5 +295,116 @@ router.get('/v1/inspections/:inspectionId', isInspector, getInspectionDetail);
  *         description: Inspection not found
  */
 router.put('/v1/inspections/:inspectionId', isInspector, parseInspectionUpdateMultipart, updateInspection);
+
+// ================== MESSAGING ==================
+
+/**
+ * @swagger
+ * /api/inspector/v1/messages/{userId}:
+ *   post:
+ *     summary: Inspector sends message to user
+ *     description: |
+ *       Inspector can freely send messages to any user (buyer/seller/admin).
+ *       No restrictions on who inspector can message (same as admin).
+ *       
+ *       **Supports file/image attachments:**
+ *       - Upload single file via `attachment` form field (multipart/form-data)
+ *       - Allowed formats: images (jpeg, png, webp, gif) and documents (pdf, doc, docx, txt)
+ *       - Max file size: 10MB
+ *       - Optional: leave empty to send text-only message
+ *       
+ *       **Conversation lifecycle:**
+ *       - New message: conversationStatus set to 'active'
+ *       - User can reply if conversation is 'active'
+ *       - User cannot reply if conversation is 'closed'
+ *     tags: [Inspector - Conversations]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Target user ID (buyer, seller, or other admin/inspector)
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - content
+ *             properties:
+ *               content:
+ *                 type: string
+ *                 description: Message content (required, non-empty)
+ *               bikeId:
+ *                 type: string
+ *                 format: uuid
+ *                 description: Optional bike ID reference
+ *               attachment:
+ *                 type: string
+ *                 format: binary
+ *                 description: Optional file attachment (image or document, max 10MB)
+ *     responses:
+ *       201:
+ *         description: Message sent successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id:
+ *                       type: string
+ *                       format: uuid
+ *                     senderId:
+ *                       type: string
+ *                       format: uuid
+ *                     receiverId:
+ *                       type: string
+ *                       format: uuid
+ *                     content:
+ *                       type: string
+ *                     bikeId:
+ *                       type: string
+ *                       format: uuid
+ *                       nullable: true
+ *                     fileUrl:
+ *                       type: string
+ *                       nullable: true
+ *                       description: URL to attached file if uploaded
+ *                     isRead:
+ *                       type: boolean
+ *                     conversationStatus:
+ *                       type: string
+ *                       example: "active"
+ *                     createdAt:
+ *                       type: string
+ *                       format: date-time
+ *                     receiver:
+ *                       type: object
+ *                       properties:
+ *                         id:
+ *                           type: string
+ *                           format: uuid
+ *                         name:
+ *                           type: string
+ *                         role:
+ *                           type: string
+ *       400:
+ *         description: Invalid input (empty content, invalid IDs, unsupported file type)
+ *       404:
+ *         description: User or bike not found
+ *       401:
+ *         description: Unauthorized - Inspector role required
+ */
+router.post('/v1/messages/:userId', isInspector, messageUpload, attachFileUrl, sendMessageToUser);
 
 export default router;

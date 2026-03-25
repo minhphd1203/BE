@@ -12,11 +12,13 @@ import {
   submitReport,
   getMyReports,
   getSellerBikesForReport,
+  getReportReasons,
   addReview,
   sendMessageToSeller,
   getMessageWithSeller,
 } from '../controllers/buyerController';
 import { isAuthenticated, optionalAuth } from '../middleware/authMiddleware';
+import { messageUpload, attachFileUrl } from '../middleware/messageUploadMiddleware';
 
 const router = express.Router();
 
@@ -360,7 +362,17 @@ router.delete('/v1/wishlist/:bikeId', isAuthenticated, removeFromWishlist);
  * @swagger
  * /api/buyer/v1/sellers/{sellerId}/bikes:
  *   get:
- *     summary: Lấy danh sách xe của seller để chọn khi báo cáo
+ *     summary: "[FORM SUPPORT] Get seller's APPROVED bikes for report selection"
+ *     description: |
+ *       Fetch list of **APPROVED bikes only** from a seller to populate bike selection in report form.
+ *       Only bikes with status='approved' are shown (available for purchase/report).
+ *       Bikes in other states (pending, rejected, reserved, sold, hidden) are excluded.
+ *       
+ *       **Report Form Flow:**
+ *       1. Get seller's bikes (this endpoint) → populate bike dropdown (approved only)
+ *       2. Get report reasons (GET /report-reasons) → populate reason dropdown
+ *       3. User selects bike + reason + enters description
+ *       4. Submit report (POST /reports) with selected reasonId (from database, not free-text)
  *     tags: [Buyer]
  *     security:
  *       - bearerAuth: []
@@ -371,10 +383,10 @@ router.delete('/v1/wishlist/:bikeId', isAuthenticated, removeFromWishlist);
  *         schema:
  *           type: string
  *           format: uuid
- *         description: ID của seller cần báo cáo
+ *         description: ID of seller whose bikes to display
  *     responses:
  *       200:
- *         description: Danh sách xe của seller
+ *         description: Seller's approved bikes fetched successfully for report form
  *         content:
  *           application/json:
  *             schema:
@@ -390,23 +402,31 @@ router.delete('/v1/wishlist/:bikeId', isAuthenticated, removeFromWishlist);
  *                       properties:
  *                         id:
  *                           type: string
+ *                           format: uuid
  *                         name:
  *                           type: string
  *                     bikes:
  *                       type: array
+ *                       description: List of seller's APPROVED bikes only to choose from when reporting
  *                       items:
  *                         type: object
  *                         properties:
  *                           id:
  *                             type: string
+ *                             format: uuid
  *                           title:
  *                             type: string
  *                           brand:
  *                             type: string
  *                           condition:
  *                             type: string
+ *                           price:
+ *                             type: number
+ *                           status:
+ *                             type: string
+ *                             example: "approved"
  *       404:
- *         description: Seller không tồn tại
+ *         description: Seller not found
  */
 router.get('/v1/sellers/:sellerId/bikes', isAuthenticated, getSellerBikesForReport);
 
@@ -414,7 +434,25 @@ router.get('/v1/sellers/:sellerId/bikes', isAuthenticated, getSellerBikesForRepo
  * @swagger
  * /api/buyer/v1/reports:
  *   post:
- *     summary: Báo cáo vi phạm (xe hoặc người dùng)
+ *     summary: Submit a violation report (bike or seller user)
+ *     description: |
+ *       Submit a report with **reason selected from database** (not free-text).
+ *       
+ *       **Prerequisites:**
+ *       1. Frontend MUST first call GET /report-reasons to fetch available options
+ *       2. Display reasons as **dropdown/multi-select form** to user
+ *       3. User selects one reason from the list
+ *       4. If reason is "Others (Khác)", require user to enter reasonText field
+ *       5. Submit report with selected reasonId here
+ *       
+ *       **System Auto-Resolution:**
+ *       - Some reasons (e.g., "Bike Quality Unmatched Reality") have isSystemAutoResolvable=true
+ *       - When admin approves these, system automatically executes action (e.g., delete bike)
+ *       - Frontend can rely on backend auto-action OR make optional delete call for safety
+ *       
+ *       **Field Requirement Logic:**
+ *       - reasonId="others" → reasonText is **REQUIRED** (free-text custom violation)
+ *       - reasonId=any-uuid → reasonText is **IGNORED** (system-defined reason)
  *     tags: [Buyer]
  *     security:
  *       - bearerAuth: []
@@ -424,29 +462,69 @@ router.get('/v1/sellers/:sellerId/bikes', isAuthenticated, getSellerBikesForRepo
  *         application/json:
  *           schema:
  *             type: object
- *             required: [reason, description]
+ *             required: [reasonId, description]
  *             properties:
  *               reportedUserId:
  *                 type: string
  *                 format: uuid
- *                 description: ID người bị báo cáo (tùy chọn)
+ *                 description: ID of reported user (optional, if reporting user misconduct)
  *               reportedBikeId:
  *                 type: string
  *                 format: uuid
- *                 description: ID xe bị báo cáo (tùy chọn)
- *               reason:
+ *                 description: ID of reported bike (optional, if reporting bike issue)
+ *               reasonId:
  *                 type: string
- *                 example: "Thông tin xe không trung thực"
+ *                 description: |
+ *                   **Reason selection from database dropdown** (from GET /report-reasons).
+ *                   Must be one of the returned UUIDs OR the string 'others'
+ *                 example: "10000000-0000-0000-0000-000000000001"
+ *               reasonText:
+ *                 type: string
+ *                 description: |
+ *                   **REQUIRED ONLY if reasonId='others'**
+ *                   Custom violation description when user selects "Others" option.
+ *                   IGNORED if reasonId is a system reason UUID.
+ *                 example: "Chiếc xe được bán nhưng vẫn còn được listing"
  *               description:
  *                 type: string
+ *                 description: Detailed explanation/evidence of the violation
  *                 example: "Ảnh không đúng với thực tế, xe bị hỏng nhiều hơn mô tả"
  *     responses:
  *       201:
- *         description: Báo cáo đã gửi thành công
+ *         description: Report submitted successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id:
+ *                       type: string
+ *                       format: uuid
+ *                     reasonId:
+ *                       type: string
+ *                     reasonText:
+ *                       type: string
+ *                       nullable: true
+ *                     description:
+ *                       type: string
+ *                     status:
+ *                       type: string
+ *                       example: "pending"
+ *                     createdAt:
+ *                       type: string
  *       400:
- *         description: Thiếu thông tin bắt buộc
+ *         description: |
+ *           Bad request. Common errors:
+ *           - reasonId not in dropdown list
+ *           - reasonId='others' but reasonText missing
+ *           - Missing reportedUserId or reportedBikeId
  *       401:
- *         description: Unauthorized
+ *         description: Unauthorized - must be logged in
  */
 router.post('/v1/reports', isAuthenticated, submitReport);
 
@@ -454,7 +532,10 @@ router.post('/v1/reports', isAuthenticated, submitReport);
  * @swagger
  * /api/buyer/v1/reports:
  *   get:
- *     summary: Xem danh sách báo cáo của buyer
+ *     summary: View buyer's submitted reports
+ *     description: |
+ *       Retrieve all reports submitted by current buyer.
+ *       Each report shows the selected reason (fetched from database, not free-text).
  *     tags: [Buyer]
  *     security:
  *       - bearerAuth: []
@@ -463,22 +544,23 @@ router.post('/v1/reports', isAuthenticated, submitReport);
  *         name: status
  *         schema:
  *           type: string
- *         description: Lọc theo trạng thái (pending, resolved)
+ *           enum: [pending, resolved]
+ *         description: Filter by report status
  *       - in: query
  *         name: page
  *         schema:
  *           type: integer
  *           default: 1
- *         description: Trang thứ mấy
+ *         description: Page number
  *       - in: query
  *         name: limit
  *         schema:
  *           type: integer
  *           default: 10
- *         description: Số báo cáo trên một trang
+ *         description: Items per page
  *     responses:
  *       200:
- *         description: Danh sách báo cáo của buyer
+ *         description: List of buyer's reports
  *         content:
  *           application/json:
  *             schema:
@@ -489,27 +571,116 @@ router.post('/v1/reports', isAuthenticated, submitReport);
  *                 data:
  *                   type: array
  *                   items:
+ *                     type: object
  *                     properties:
  *                       id:
  *                         type: string
- *                       reason:
+ *                         format: uuid
+ *                       reasonId:
  *                         type: string
+ *                         format: uuid
+ *                         description: "Reference to reason from report-reasons table (or 'others' for custom)"
+ *                       reasonText:
+ *                         type: string
+ *                         nullable: true
+ *                         description: "Custom text if reasonId='others'"
  *                       description:
  *                         type: string
  *                       status:
  *                         type: string
+ *                         enum: [pending, resolved]
  *                       reportedUser:
  *                         type: object
  *                       reportedBike:
  *                         type: object
  *                       resolution:
  *                         type: string
+ *                       autoResolutionAction:
+ *                         type: string
+ *                         description: "Action auto-executed by system (e.g., 'delete_bike'). Null if reason is not auto-resolvable"
+ *                         example: "auto bike deletion performed"
  *                       createdAt:
  *                         type: string
  *       401:
  *         description: Unauthorized
  */
 router.get('/v1/reports', isAuthenticated, getMyReports);
+
+/**
+ * @swagger
+ * /api/buyer/v1/report-reasons:
+ *   get:
+ *     summary: "[FORM DROPDOWN] Fetch report reasons from database"
+ *     description: |
+ *       Fetch list of all available violation reasons (database-driven dropdown).
+ *       Used to populate the "reason" selection field in report form.
+ *       
+ *       **Flow:**
+ *       1. Frontend calls this endpoint on report form load
+ *       2. Displays all reasons as selectable options (dropdown/multi-select)
+ *       3. User selects one reason option
+ *       4. Frontend submits report with selected reasonId to POST /v1/reports
+ *       
+ *       **Special Option:** "Others (Khác)" always included at bottom for custom violations
+ *       - If user selects "Others", reasonText field becomes required in report submission
+ *       - System will not auto-resolve "Others" violations (manual admin review)
+ *     tags: [Buyer]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: List of available violation reasons for selection
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: array
+ *                   description: "Array of selectable options for report reason field"
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: string
+ *                         format: uuid
+ *                         example: "10000000-0000-0000-0000-000000000001"
+ *                       name:
+ *                         type: string
+ *                         description: "Display name shown in dropdown"
+ *                         example: "Bike's Quality Unmatched Reality"
+ *                       description:
+ *                         type: string
+ *                         description: "Detailed explanation of this violation type"
+ *                         example: "Bike received is different from seller description - misleading info or quality defect"
+ *                       isSystemAutoResolvable:
+ *                         type: boolean
+ *                         description: "If true, system will auto-execute action when admin approves (e.g., auto-delete bike)"
+ *                         example: true
+ *             examples:
+ *               success_example:
+ *                 value:
+ *                   success: true
+ *                   data:
+ *                     - id: "10000000-0000-0000-0000-000000000001"
+ *                       name: "Bike's Quality Unmatched Reality"
+ *                       description: "Bike received is different from seller description"
+ *                       isSystemAutoResolvable: true
+ *                     - id: "20000000-0000-0000-0000-000000000002"
+ *                       name: "Prohibited Item"
+ *                       description: "Item appears to be prohibited or illegal"
+ *                       isSystemAutoResolvable: false
+ *                     - id: "others"
+ *                       name: "Others (Khác)"
+ *                       description: "Custom violation - requires detailed explanation"
+ *                       isSystemAutoResolvable: false
+ *       401:
+ *         description: Unauthorized - must be logged in
+ */
+router.get('/v1/report-reasons', isAuthenticated, getReportReasons);
 
 // ============= REVIEWS =============
 
@@ -560,7 +731,21 @@ router.post('/v1/reviews', isAuthenticated, addReview);
  * @swagger
  * /api/buyer/v1/messages/{sellerId}:
  *   post:
- *     summary: Nhắn tin cho seller về một chiếc xe
+ *     summary: Send message to seller, admin, or inspector
+ *     description: |
+ *       Send a message to a seller, admin, or inspector.
+ *       
+ *       **Supports file/image attachments:**
+ *       - Upload single file via `attachment` form field (multipart/form-data)
+ *       - Allowed formats: images (jpeg, png, webp, gif) and documents (pdf, doc, docx, txt)
+ *       - Max file size: 10MB
+ *       - Optional: leave empty to send text-only message
+ *       
+ *       **Constraints:**
+ *       - **Cannot initiate** to admin/inspector (403 error if no prior conversation)
+ *       - **Can reply** to messages from admin/inspector if they messaged first
+ *       - **Cannot send** if conversation is closed by admin/inspector (403 error)
+ *       - **Can freely** message sellers/buyers (bidirectional, any time)
  *     tags: [Buyer]
  *     security:
  *       - bearerAuth: []
@@ -574,7 +759,7 @@ router.post('/v1/reviews', isAuthenticated, addReview);
  *     requestBody:
  *       required: true
  *       content:
- *         application/json:
+ *         multipart/form-data:
  *           schema:
  *             type: object
  *             required: [content]
@@ -586,15 +771,24 @@ router.post('/v1/reviews', isAuthenticated, addReview);
  *                 type: string
  *                 format: uuid
  *                 description: ID xe liên quan (tùy chọn)
+ *               attachment:
+ *                 type: string
+ *                 format: binary
+ *                 description: Optional file attachment (image or document, max 10MB)
  *     responses:
  *       201:
  *         description: Tin nhắn đã gửi
+ *       403:
+ *         description: |
+ *           Cannot send message:
+ *           - Cannot initiate messages to admin/inspector
+ *           - Conversation has been closed
  *       400:
- *         description: Nội dung trống
+ *         description: Nội dung trống, seller không tồn tại, hoặc loại file không hỗ trợ
  *       401:
  *         description: Unauthorized
  */
-router.post('/v1/messages/:sellerId', isAuthenticated, sendMessageToSeller);
+router.post('/v1/messages/:sellerId', isAuthenticated, messageUpload, attachFileUrl, sendMessageToSeller);
 
 /**
  * @swagger

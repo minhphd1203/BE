@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { db } from '../db';
-import { bikes, users, transactions, reports, categories } from '../db/schema';
-import { desc, eq, and } from 'drizzle-orm';
+import { bikes, users, transactions, reports, categories, reportReasons, inspections, messages } from '../db/schema';
+import { desc, eq, and, or } from 'drizzle-orm';
 import { UserPublic, ApiResponse } from '../models';
 
 // ============= QUẢN LÝ XE ĐẠP =============
@@ -537,36 +537,113 @@ export const resolveReport = async (req: Request, res: Response) => {
       });
     }
 
-    const [resolvedReport] = await db
-      .update(reports)
-      .set({
-        status: status || 'resolved',
-        resolution: resolution,
-        resolvedBy: req.user.userId,
-        resolvedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(reports.id, id))
-      .returning();
+    // Fetch report with reason to check for auto-resolution (outside transaction for read)
+    const reportToResolve = await db.query.reports.findFirst({
+      where: eq(reports.id, id),
+      with: {
+        reason: {
+          columns: {
+            autoResolveAction: true,
+            name: true,
+          },
+        },
+      },
+    });
 
-    if (!resolvedReport) {
+    if (!reportToResolve) {
       return res.status(404).json({
         success: false,
         message: 'Report not found'
       });
     }
 
+    // Check if report is already resolved - specific error BEFORE transaction
+    if (reportToResolve.status === 'resolved') {
+      return res.status(400).json({
+        success: false,
+        message: 'This report has already been resolved'
+      });
+    }
+
+    // Execute report update and auto-delete action in a transaction
+    // If either operation fails, both are rolled back
+    const result = await db.transaction(async (tx) => {
+      // Step 1: Update report status to resolved
+      const [resolvedReport] = await tx
+        .update(reports)
+        .set({
+          status: status || 'resolved',
+          resolution: resolution,
+          resolvedBy: req.user!.userId,
+          resolvedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(reports.id, id))
+        .returning();
+
+      if (!resolvedReport) {
+        throw new Error('Report not found during update');
+      }
+
+      // Step 2: Auto-delete bike if this is a quality violation
+      let autoResolutionMessage = '';
+      if (status === 'resolved' && reportToResolve.reason?.autoResolveAction === 'delete_bike') {
+        if (resolvedReport.reportedBikeId) {
+          // Fetch bike status within transaction
+          const bike = await tx.query.bikes.findFirst({
+            where: eq(bikes.id, resolvedReport.reportedBikeId),
+            columns: { status: true },
+          });
+
+          if (bike && ['approved', 'reserved', 'sold'].includes(bike.status)) {
+            // Delete related records first (cascade delete manually)
+            // Delete transactions related to this bike
+            await tx.delete(transactions).where(eq(transactions.bikeId, resolvedReport.reportedBikeId));
+            
+            // Delete inspections related to this bike
+            await tx.delete(inspections).where(eq(inspections.bikeId, resolvedReport.reportedBikeId));
+            
+            // Clear bike references in messages (set to NULL since it's optional)
+            await tx
+              .update(messages)
+              .set({ bikeId: null })
+              .where(eq(messages.bikeId, resolvedReport.reportedBikeId));
+            
+            // Clear bike references in other reports
+            await tx
+              .update(reports)
+              .set({ reportedBikeId: null })
+              .where(eq(reports.reportedBikeId, resolvedReport.reportedBikeId));
+            
+            // Delete the bike itself
+            await tx.delete(bikes).where(eq(bikes.id, resolvedReport.reportedBikeId));
+            autoResolutionMessage = `[Auto] Bike deleted due to "${reportToResolve.reason.name}" violation`;
+            console.log(`[Report Auto-Resolution] Bike ${resolvedReport.reportedBikeId} and related data deleted for report ${id}`);
+          } else if (bike) {
+            throw new Error(`Cannot auto-delete bike with status "${bike.status}". Only approved, reserved, or sold bikes can be deleted.`);
+          }
+        }
+      }
+
+      return { resolvedReport, autoResolutionMessage };
+    });
+
     const response: ApiResponse = {
       success: true,
-      data: resolvedReport,
-      message: 'Report resolved successfully'
+      data: {
+        ...result.resolvedReport,
+        autoResolutionAction: result.autoResolutionMessage || undefined,
+      },
+      message: result.autoResolutionMessage || 'Report resolved successfully'
     };
     
     res.status(200).json(response);
   } catch (error) {
+    // If transaction fails, status remains unchanged and bike is not deleted
+    console.error('[Report Resolution Error]', error);
     res.status(500).json({ 
       success: false,
-      message: 'Error resolving report', 
+      message: 'Error resolving report. Transaction rolled back - report status unchanged', 
       error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
@@ -676,4 +753,410 @@ export const deleteCategory = async (req: Request, res: Response) => {
     success: false,
     message: 'Category management not implemented yet. Please create categories schema first.'
   });
+};
+
+// ============= QUẢN LÝ LOẠI KHIẾU NẠI (REPORT REASONS) =============
+
+/**
+ * GET /api/admin/v1/report-reasons
+ * Get all report violation types
+ */
+export const getAllReportReasons = async (req: Request, res: Response) => {
+  try {
+    const allReasons = await db.query.reportReasons.findMany({
+      orderBy: [desc(reportReasons.createdAt)],
+    });
+
+    const response: ApiResponse = {
+      success: true,
+      data: allReasons,
+      message: 'Report reasons fetched successfully'
+    };
+
+    res.status(200).json(response);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching report reasons',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+};
+
+/**
+ * POST /api/admin/v1/report-reasons
+ * Create a new report violation type
+ */
+export const createReportReason = async (req: Request, res: Response) => {
+  try {
+    const { name, description, isSystemAutoResolvable, autoResolveAction } = req.body;
+
+    if (!name) {
+      return res.status(400).json({
+        success: false,
+        message: 'Reason name is required'
+      });
+    }
+
+    const [newReason] = await db
+      .insert(reportReasons)
+      .values({
+        name,
+        description,
+        isSystemAutoResolvable: isSystemAutoResolvable || false,
+        autoResolveAction,
+      })
+      .returning();
+
+    const response: ApiResponse = {
+      success: true,
+      data: newReason,
+      message: 'Report reason created successfully'
+    };
+
+    res.status(201).json(response);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error creating report reason',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+};
+
+/**
+ * PUT /api/admin/v1/report-reasons/:id
+ * Update a report violation type
+ */
+export const updateReportReason = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { name, description, isSystemAutoResolvable, autoResolveAction } = req.body;
+
+    const [updatedReason] = await db
+      .update(reportReasons)
+      .set({
+        name,
+        description,
+        isSystemAutoResolvable,
+        autoResolveAction,
+      })
+      .where(eq(reportReasons.id, id))
+      .returning();
+
+    if (!updatedReason) {
+      return res.status(404).json({
+        success: false,
+        message: 'Report reason not found'
+      });
+    }
+
+    const response: ApiResponse = {
+      success: true,
+      data: updatedReason,
+      message: 'Report reason updated successfully'
+    };
+
+    res.status(200).json(response);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error updating report reason',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+};
+
+/**
+ * DELETE /api/admin/v1/report-reasons/:id
+ * Delete a report violation type
+ */
+export const deleteReportReason = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    // Prevent deleting system violations
+    const reason = await db.query.reportReasons.findFirst({
+      where: eq(reportReasons.id, id),
+    });
+
+    if (!reason) {
+      return res.status(404).json({
+        success: false,
+        message: 'Report reason not found'
+      });
+    }
+
+    if (reason.isSystemAutoResolvable) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete system auto-resolvable violation types'
+      });
+    }
+
+    const [deletedReason] = await db
+      .delete(reportReasons)
+      .where(eq(reportReasons.id, id))
+      .returning();
+
+    const response: ApiResponse = {
+      success: true,
+      data: deletedReason,
+      message: 'Report reason deleted successfully'
+    };
+
+    res.status(200).json(response);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error deleting report reason',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+};
+
+/**
+ * DELETE /api/admin/v1/bikes/:bikeId
+ * Admin can delete a bike (only if status is approved, reserved, or sold)
+ */
+export const deleteBike = async (req: Request, res: Response) => {
+  try {
+    const { bikeId } = req.params;
+
+    const bike = await db.query.bikes.findFirst({
+      where: eq(bikes.id, bikeId),
+    });
+
+    if (!bike) {
+      return res.status(404).json({
+        success: false,
+        message: 'Bike not found'
+      });
+    }
+
+    // Only allow deletion of bikes with specific statuses
+    const allowedStatuses = ['approved', 'reserved', 'sold'];
+    if (!allowedStatuses.includes(bike.status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Can only delete bikes with status: ${allowedStatuses.join(', ')}. Current status: ${bike.status}`
+      });
+    }
+
+    const [deletedBike] = await db
+      .delete(bikes)
+      .where(eq(bikes.id, bikeId))
+      .returning();
+
+    const response: ApiResponse = {
+      success: true,
+      data: {
+        id: deletedBike.id,
+        title: deletedBike.title,
+        status: deletedBike.status,
+        message: 'Bike deleted successfully (removed from listing)'
+      },
+      message: 'Bike deleted successfully'
+    };
+
+    res.status(200).json(response);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error deleting bike',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+};
+
+// ============= CONVERSATION MANAGEMENT =============
+
+/**
+ * Close a conversation with a buyer/seller
+ * Once closed, they can no longer send messages to this admin/inspector
+ */
+export const closeConversation = async (req: Request, res: Response) => {
+  try {
+    const adminId = req.user?.userId;
+    const userId = req.params.userId as string; // Buyer or seller ID
+
+    if (!adminId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized'
+      });
+    }
+
+    // Find all messages in this conversation
+    const conversationMessages = await db.query.messages.findMany({
+      where: or(
+        and(eq(messages.senderId, adminId), eq(messages.receiverId, userId)),
+        and(eq(messages.senderId, userId), eq(messages.receiverId, adminId))
+      ),
+    });
+
+    if (conversationMessages.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No conversation found with this user'
+      });
+    }
+
+    // Update all messages in this conversation to closed status
+    await db
+      .update(messages)
+      .set({
+        conversationStatus: 'closed',
+        conversationClosedAt: new Date(),
+        conversationClosedBy: adminId,
+      })
+      .where(
+        or(
+          and(eq(messages.senderId, adminId), eq(messages.receiverId, userId)),
+          and(eq(messages.senderId, userId), eq(messages.receiverId, adminId))
+        )
+      );
+
+    const response: ApiResponse = {
+      success: true,
+      data: {
+        userId,
+        conversationStatus: 'closed',
+        totalMessagesInConversation: conversationMessages.length,
+        closedAt: new Date(),
+      },
+      message: 'Conversation closed successfully. User can no longer send messages.'
+    };
+
+    res.status(200).json(response);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error closing conversation',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+};
+
+// ============= SEND MESSAGE TO USER =============
+
+/**
+ * POST /api/admin/v1/messages/:userId
+ * Admin sends a message to any user (buyer/seller/inspector)
+ * Unrestricted: Admin can freely initiate conversations with anyone
+ * If conversation already exists, adds to existing conversation (conversationStatus remains active or closed depends on last message)
+ */
+export const sendMessageToUser = async (req: Request, res: Response) => {
+  try {
+    const adminId = req.user?.userId;
+    const userId = req.params.userId as string;
+    const { content, bikeId } = req.body;
+    const fileUrl = (req as any).fileUrl || null; // From messageUpload middleware
+
+    if (!adminId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized'
+      });
+    }
+
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    if (!UUID_REGEX.test(userId)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid user ID format' 
+      });
+    }
+
+    if (!content || content.trim() === '') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Message content cannot be empty' 
+      });
+    }
+
+    if (userId === adminId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Cannot send message to yourself' 
+      });
+    }
+
+    // Verify receiver exists
+    const [receiverRow] = await db
+      .select({ id: users.id, name: users.name, role: users.role })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    if (!receiverRow) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'User not found' 
+      });
+    }
+
+    // Validate bikeId if provided
+    let resolvedBikeId: string | null = null;
+    if (bikeId !== undefined && bikeId !== null && bikeId !== '') {
+      const bid = String(bikeId);
+      if (!UUID_REGEX.test(bid)) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Invalid bikeId format' 
+        });
+      }
+
+      const [bikeRow] = await db
+        .select({ id: bikes.id })
+        .from(bikes)
+        .where(eq(bikes.id, bid))
+        .limit(1);
+
+      if (!bikeRow) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Bike not found' 
+        });
+      }
+
+      resolvedBikeId = bid;
+    }
+
+    // Create message (unrestricted - admin can freely message anyone)
+    const [newMessage] = await db
+      .insert(messages)
+      .values({
+        senderId: adminId,
+        receiverId: userId,
+        bikeId: resolvedBikeId,
+        content: content.trim(),
+        fileUrl: fileUrl,
+        isRead: false,
+        conversationStatus: 'active', // Default to active
+      })
+      .returning();
+
+    const response: ApiResponse = {
+      success: true,
+      data: {
+        ...newMessage,
+        receiver: {
+          id: receiverRow.id,
+          name: receiverRow.name,
+          role: receiverRow.role
+        }
+      },
+      message: `Message sent successfully to ${receiverRow.name}`
+    };
+
+    res.status(201).json(response);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error sending message',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
 };

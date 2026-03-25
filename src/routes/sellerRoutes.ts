@@ -18,6 +18,7 @@ import {
 } from '../controllers/sellerController';
 import { isAuthenticated, requireRole } from '../middleware/authMiddleware';
 import { parseBikeListingMultipart, parseBikeUpdateMultipart } from '../middleware/bikeUploadMiddleware';
+import { messageUpload, attachFileUrl } from '../middleware/messageUploadMiddleware';
 
 const router = express.Router();
 
@@ -550,7 +551,21 @@ router.get('/v1/messages/:partnerId', getMessageHistory);
  * @swagger
  * /api/seller/v1/messages/{partnerId}:
  *   post:
- *     summary: Gửi tin nhắn phản hồi cho buyer
+ *     summary: Send message to buyer, admin, or inspector
+ *     description: |
+ *       Send a message to a buyer, admin, or inspector.
+ *       
+ *       **Supports file/image attachments:**
+ *       - Upload single file via `attachment` form field (multipart/form-data)
+ *       - Allowed formats: images (jpeg, png, webp, gif) and documents (pdf, doc, docx, txt)
+ *       - Max file size: 10MB
+ *       - Optional: leave empty to send text-only message
+ *       
+ *       **Constraints:**
+ *       - **Cannot initiate** to admin/inspector (403 error if no prior conversation)
+ *       - **Can reply** to messages from admin/inspector if they messaged first
+ *       - **Cannot send** if conversation is closed by admin/inspector (403 error)
+ *       - **Can freely** message buyers/sellers (bidirectional, any time)
  *     tags: [Seller]
  *     security:
  *       - bearerAuth: []
@@ -561,11 +576,11 @@ router.get('/v1/messages/:partnerId', getMessageHistory);
  *         schema:
  *           type: string
  *           format: uuid
- *         description: ID buyer cần nhắn tin
+ *         description: ID người nhận (buyer, admin, or inspector)
  *     requestBody:
  *       required: true
  *       content:
- *         application/json:
+ *         multipart/form-data:
  *           schema:
  *             type: object
  *             required: [content]
@@ -577,15 +592,24 @@ router.get('/v1/messages/:partnerId', getMessageHistory);
  *                 type: string
  *                 format: uuid
  *                 description: ID xe liên quan (tùy chọn)
+ *               attachment:
+ *                 type: string
+ *                 format: binary
+ *                 description: Optional file attachment (image or document, max 10MB)
  *     responses:
  *       201:
  *         description: Tin nhắn đã gửi
+ *       403:
+ *         description: |
+ *           Cannot send message:
+ *           - Cannot initiate messages to admin/inspector
+ *           - Conversation has been closed
  *       400:
- *         description: ID không hợp lệ hoặc nội dung trống
+ *         description: ID không hợp lệ, nội dung trống, hoặc loại file không hỗ trợ
  *       401:
  *         description: Unauthorized
  */
-router.post('/v1/messages/:partnerId', sendMessage);
+router.post('/v1/messages/:partnerId', messageUpload, attachFileUrl, sendMessage);
 
 // ============= REVIEWS / REPUTATION =============
 
