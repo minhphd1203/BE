@@ -21,7 +21,9 @@ import {
   deleteReportReason,
   deleteBike,
   closeConversation,
-  sendMessageToUser
+  sendMessageToUser,
+  getConversations,
+  getMessageHistory
 } from '../controllers/adminController';
 import { isAdmin } from '../middleware/authMiddleware';
 import { messageUpload, attachFileUrl } from '../middleware/messageUploadMiddleware';
@@ -809,5 +811,62 @@ router.post('/v1/conversations/:userId/close', isAdmin, closeConversation);
  *         description: Unauthorized - Admin role required
  */
 router.post('/v1/messages/:userId', isAdmin, messageUpload, attachFileUrl, sendMessageToUser);
+
+/**
+ * @swagger
+ * /api/admin/v1/conversations:
+ *   get:
+ *     summary: Get all conversations for admin
+ *     description: Admin retrieves all active conversations (received and sent messages)
+ *     tags: [Admin - Conversations]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: List of conversations
+ *       401:
+ *         description: Unauthorized - Admin role required
+ */
+router.get('/v1/conversations', isAdmin, getConversations);
+
+/**
+ * @swagger
+ * /api/admin/v1/conversations/{userId}:
+ *   get:
+ *     summary: Get message history with a specific user
+ *     description: Admin retrieves conversation history with one user (paginated)
+ *     tags: [Admin - Conversations]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *       - in: query
+ *         name: bikeId
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Filter by bike (optional)
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 30
+ *     responses:
+ *       200:
+ *         description: Message history
+ *       401:
+ *         description: Unauthorized
+ */
+router.get('/v1/conversations/:userId', isAdmin, getMessageHistory);
 
 export default router;

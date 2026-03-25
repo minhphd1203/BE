@@ -181,7 +181,7 @@ async function seedData() {
       const condition = random.pick(conditions);
       const city = random.pick(cities);
       const size = random.pick(sizes);
-      const status = random.pick(statuses);
+      const status = 'approved'; // Tất cả bike đều được duyệt để hiển thị ngay
       
       bikeValues.push({
         title: generateBikeTitle(brand, model, year),

@@ -22,7 +22,7 @@ function buildVNPayUrl(params: Record<string, string>): string {
   const sortedKeys = Object.keys(params).sort();
   // Chuỗi ký HMAC: key=value nối &, GIÁ TRỊ KHÔNG URL-encode (VNPay so khớp trên bản raw).
   // Trước đây dùng encodeURIComponent cho cả hash → sai chữ ký (mã 70) trên cổng VNPay.
-  const hashData = sortedKeys.map((k) => `${k}=${params[k]}`).join('&');
+  const hashData = sortedKeys.map((k) => `${k}=${encodeURIComponent(params[k])}`).join('&');
   const hmac = crypto.createHmac('sha512', secret);
   const secureHash = hmac.update(Buffer.from(hashData, 'utf-8')).digest('hex');
   // URL gửi trình duyệt: mới encode từng value theo chuẩn query string
@@ -37,7 +37,7 @@ function verifyVNPaySignature(params: Record<string, string>): boolean {
   delete filteredParams['vnp_SecureHash'];
   delete filteredParams['vnp_SecureHashType'];
   const sortedKeys = Object.keys(filteredParams).sort();
-  const hashData = sortedKeys.map(k => `${k}=${filteredParams[k]}`).join('&');
+  const hashData = sortedKeys.map(k => `${k}=${encodeURIComponent(params[k])}`).join('&');
   const hmac = crypto.createHmac('sha512', secret);
   const calculatedHash = hmac.update(Buffer.from(hashData, 'utf-8')).digest('hex');
   return calculatedHash === receivedHash;

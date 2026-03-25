@@ -1160,3 +1160,141 @@ export const sendMessageToUser = async (req: Request, res: Response) => {
     });
   }
 };
+
+/**
+ * GET /api/admin/v1/conversations
+ * Admin retrieves all conversations (received and sent messages)
+ */
+export const getConversations = async (req: Request, res: Response) => {
+  try {
+    const adminId = req.user?.userId;
+
+    if (!adminId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized'
+      });
+    }
+
+    const allMessages = await db.query.messages.findMany({
+      where: or(eq(messages.receiverId, adminId), eq(messages.senderId, adminId)),
+      with: {
+        sender: { columns: { id: true, name: true, avatar: true, role: true } },
+        receiver: { columns: { id: true, name: true, avatar: true, role: true } },
+        bike: { columns: { id: true, title: true, brand: true, model: true, images: true } },
+      },
+      orderBy: [desc(messages.createdAt)],
+    });
+
+    // Group by conversation key (bikeId + partner)
+    const conversationMap = new Map<string, any>();
+    for (const msg of allMessages) {
+      const partnerId = msg.senderId === adminId ? msg.receiverId : msg.senderId;
+      const key = `${msg.bikeId ?? 'general'}_${partnerId}`;
+      if (!conversationMap.has(key)) {
+        conversationMap.set(key, {
+          partner: msg.senderId === adminId ? msg.receiver : msg.sender,
+          bike: msg.bike,
+          lastMessage: {
+            id: msg.id,
+            content: msg.content,
+            isRead: msg.isRead,
+            createdAt: msg.createdAt,
+            isMine: msg.senderId === adminId,
+          },
+          conversationStatus: msg.conversationStatus,
+        });
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      data: Array.from(conversationMap.values()),
+      message: 'Conversations retrieved successfully',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching conversations',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+};
+
+/**
+ * GET /api/admin/v1/conversations/:userId
+ * Admin retrieves message history with a specific user
+ */
+export const getMessageHistory = async (req: Request, res: Response) => {
+  try {
+    const adminId = req.user?.userId;
+    const { userId } = req.params;
+    const { bikeId, page = 1, limit = 30 } = req.query;
+
+    if (!adminId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized'
+      });
+    }
+
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    if (!UUID_REGEX.test(userId)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid user ID format' 
+      });
+    }
+
+    const pageNum = parseInt(page as string) || 1;
+    const limitNum = parseInt(limit as string) || 30;
+    const offset = (pageNum - 1) * limitNum;
+
+    const filters: any[] = [
+      or(
+        and(eq(messages.senderId, adminId), eq(messages.receiverId, userId)),
+        and(eq(messages.senderId, userId), eq(messages.receiverId, adminId))
+      ),
+    ];
+
+    if (bikeId) {
+      const bid = String(bikeId);
+      if (!UUID_REGEX.test(bid)) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Invalid bikeId format' 
+        });
+      }
+      filters.push(eq(messages.bikeId, bid));
+    }
+
+    const history = await db.query.messages.findMany({
+      where: and(...filters),
+      with: {
+        sender: { columns: { id: true, name: true, avatar: true } },
+      },
+      orderBy: [desc(messages.createdAt)],
+      limit: limitNum,
+      offset,
+    });
+
+    // Mark unreceived messages as read
+    await db
+      .update(messages)
+      .set({ isRead: true })
+      .where(and(eq(messages.receiverId, adminId), eq(messages.senderId, userId), eq(messages.isRead, false)));
+
+    res.status(200).json({
+      success: true,
+      data: history.reverse(),
+      message: 'Message history fetched successfully',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching message history',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+};

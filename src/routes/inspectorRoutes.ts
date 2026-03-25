@@ -9,7 +9,9 @@ import {
   getInspectionDetail,
   updateInspection,
   sendMessageToUser,
-  closeConversation
+  closeConversation,
+  getConversations,
+  getMessageHistory
 } from '../controllers/inspectorController';
 import { isInspector } from '../middleware/authMiddleware';
 import {
@@ -456,5 +458,62 @@ router.post('/v1/messages/:userId', isInspector, messageUpload, attachFileUrl, s
  *         description: Unauthorized - Inspector role required
  */
 router.put('/v1/conversations/:userId/close', isInspector, closeConversation);
+
+/**
+ * @swagger
+ * /api/inspector/v1/conversations:
+ *   get:
+ *     summary: Get all conversations for inspector
+ *     description: Inspector retrieves all active conversations (received and sent messages)
+ *     tags: [Inspector - Conversations]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: List of conversations
+ *       401:
+ *         description: Unauthorized - Inspector role required
+ */
+router.get('/v1/conversations', isInspector, getConversations);
+
+/**
+ * @swagger
+ * /api/inspector/v1/conversations/{userId}:
+ *   get:
+ *     summary: Get message history with a specific user
+ *     description: Inspector retrieves conversation history with one user (paginated)
+ *     tags: [Inspector - Conversations]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *       - in: query
+ *         name: bikeId
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Filter by bike (optional)
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 30
+ *     responses:
+ *       200:
+ *         description: Message history
+ *       401:
+ *         description: Unauthorized
+ */
+router.get('/v1/conversations/:userId', isInspector, getMessageHistory);
 
 export default router;
