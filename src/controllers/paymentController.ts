@@ -341,44 +341,60 @@ export const vnpayReturn = async (req: Request, res: Response) => {
   try {
     const params = req.query as Record<string, string>;
     const isValid = verifyVNPaySignature(params);
+    const responseCode = params['vnp_ResponseCode'];
+    const isSuccess = responseCode === '00';
+
+    // Check if this is an API call (from frontend) or a browser redirect (from VNPay)
+    // API calls come with Accept: application/json header
+    const isApiCall = req.headers.accept?.includes('application/json');
+
+    if (isApiCall) {
+      // Return JSON for frontend API calls
+      if (!isValid) {
+        return res.status(400).json({
+          success: false,
+          message: 'Chữ ký thanh toán không hợp lệ',
+          data: {
+            status: 'failed',
+            transactionId: params['vnp_TxnRef'],
+          },
+        });
+      }
+
+      return res.json({
+        success: isSuccess,
+        message: isSuccess
+          ? 'Thanh toán thành công! Giao dịch đang được xử lý.'
+          : `Thanh toán thất bại (Mã lỗi: ${responseCode})`,
+        data: {
+          status: isSuccess ? 'paid' : 'failed',
+          transactionId: params['vnp_TxnRef'],
+        },
+      });
+    }
+
+    // Browser redirect from VNPay - redirect to frontend
+    const queryString = new URLSearchParams(params).toString();
+    const appUrl = process.env.APP_URL || 'http://localhost:4200';
 
     if (!isValid) {
-      return res.status(400).json({
-        success: false,
-        message: 'Xác thực chữ ký thất bại',
-        code: 'INVALID_CHECKSUM',
-      });
+      return res.redirect(`${appUrl}/payment/vnpay-return?${queryString}&_error=invalid_signature`);
     }
 
-    const responseCode = params['vnp_ResponseCode'];
-    const txnRef = params['vnp_TxnRef'];
-
-    if (responseCode !== '00') {
-      return res.status(200).json({
-        success: false,
-        message: 'Thanh toán thất bại hoặc bị huỷ',
-        code: responseCode,
-        txnRef,
-      });
-    }
-
-    res.status(200).json({
-      success: true,
-      message: 'Thanh toán thành công',
-      data: {
-        txnRef,
-        amount: parseInt(params['vnp_Amount']) / 100,
-        bankCode: params['vnp_BankCode'],
-        payDate: params['vnp_PayDate'],
-        transactionNo: params['vnp_TransactionNo'],
-      },
-    });
+    res.redirect(`${appUrl}/payment/vnpay-return?${queryString}`);
   } catch (error) {
-    res.status(400).json({
-      success: false,
-      message: 'Dữ liệu trả về không hợp lệ',
-      error: error instanceof Error ? error.message : 'Unknown error',
-    });
+    const isApiCall = req.headers.accept?.includes('application/json');
+    
+    if (isApiCall) {
+      return res.status(500).json({
+        success: false,
+        message: error instanceof Error ? error.message : 'Lỗi server',
+        data: { status: 'error' },
+      });
+    }
+
+    const appUrl = process.env.APP_URL || 'http://localhost:4200';
+    res.redirect(`${appUrl}/payment/vnpay-return?_error=${encodeURIComponent(error instanceof Error ? error.message : 'Unknown error')}`);
   }
 };
 

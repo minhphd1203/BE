@@ -943,6 +943,12 @@ export const deleteBike = async (req: Request, res: Response) => {
       });
     }
 
+    // Delete related records first to avoid foreign key constraint violations
+    await db.delete(messages).where(eq(messages.bikeId, bikeId));
+    await db.delete(inspections).where(eq(inspections.bikeId, bikeId));
+    await db.delete(reports).where(eq(reports.reportedBikeId, bikeId));
+    await db.delete(transactions).where(eq(transactions.bikeId, bikeId));
+
     const [deletedBike] = await db
       .delete(bikes)
       .where(eq(bikes.id, bikeId))
