@@ -24,13 +24,6 @@ import { eq } from 'drizzle-orm';
 const app = express();
 const port = process.env.PORT || 3000;
 
-// ngrok headers
-app.use((req, res, next) => {
-  res.setHeader('ngrok-skip-browser-warning', 'true');
-  res.setHeader('ngrok-skip-browser-warning-html', 'true');
-  next();
-});
-
 // Middleware - Manual CORS to ensure preflight works
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');

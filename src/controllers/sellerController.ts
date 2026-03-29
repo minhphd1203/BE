@@ -1008,19 +1008,28 @@ export const getConversations = async (req: Request, res: Response) => {
     for (const msg of allMessages) {
       const partnerId = msg.senderId === sellerId ? msg.receiverId : msg.senderId;
       const key = `${msg.bikeId ?? 'general'}_${partnerId}`;
+      
+      const lastMsg = {
+        id: msg.id,
+        content: msg.content,
+        fileUrl: msg.fileUrl,
+        isRead: msg.isRead,
+        createdAt: msg.createdAt,
+        isMine: msg.senderId === sellerId,
+      };
+      
       if (!conversationMap.has(key)) {
         conversationMap.set(key, {
           partner: msg.senderId === sellerId ? msg.receiver : msg.sender,
           bike: msg.bike,
-          lastMessage: {
-            id: msg.id,
-            content: msg.content,
-            fileUrl: msg.fileUrl,
-            isRead: msg.isRead,
-            createdAt: msg.createdAt,
-            isMine: msg.senderId === sellerId,
-          },
+          lastMessage: lastMsg,
         });
+      } else {
+        // Update if this message is more recent (double-check in case of ordering issues)
+        const existing = conversationMap.get(key)!;
+        if (new Date(msg.createdAt) > new Date(existing.lastMessage.createdAt)) {
+          existing.lastMessage = lastMsg;
+        }
       }
     }
 
