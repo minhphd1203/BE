@@ -1167,6 +1167,7 @@ export const sendMessage = async (req: Request, res: Response) => {
           and(eq(messages.senderId, sellerId), eq(messages.receiverId, partnerId)),
           and(eq(messages.senderId, partnerId), eq(messages.receiverId, sellerId))
         ),
+        orderBy: [desc(messages.createdAt)],
       });
 
       // No existing conversation = cannot initiate
@@ -1185,18 +1186,17 @@ export const sendMessage = async (req: Request, res: Response) => {
         });
       }
     } else {
-      // For non-admin/inspector: check if conversation is closed
-      const closedConversation = await db.query.messages.findFirst({
-        where: and(
-          or(
-            and(eq(messages.senderId, sellerId), eq(messages.receiverId, partnerId)),
-            and(eq(messages.senderId, partnerId), eq(messages.receiverId, sellerId))
-          ),
-          eq(messages.conversationStatus, 'closed')
+      // For buyers/sellers: check if the LATEST message is closed (not any old closed message)
+      const latestMessage = await db.query.messages.findFirst({
+        where: or(
+          and(eq(messages.senderId, sellerId), eq(messages.receiverId, partnerId)),
+          and(eq(messages.senderId, partnerId), eq(messages.receiverId, sellerId))
         ),
+        orderBy: [desc(messages.createdAt)],
       });
 
-      if (closedConversation) {
+      // Only block if the most recent message is closed. If admin/inspector sent a new active message, allow sending.
+      if (latestMessage?.conversationStatus === 'closed') {
         return res.status(403).json({
           success: false,
           message: 'This conversation has been closed. You cannot send messages.'

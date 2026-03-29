@@ -1003,6 +1003,69 @@ export const addReview = async (req: Request, res: Response) => {
 // ============= MESSAGES (BUYER) =============
 
 /**
+ * GET /api/buyer/v1/messages
+ * Lấy danh sách tất cả cuộc hội thoại của buyer với các seller.
+ */
+export const getConversations = async (req: Request, res: Response) => {
+  try {
+    const buyerId = req.user!.userId;
+
+    // Lấy tất cả tin nhắn liên quan đến buyer (nhận hoặc gửi)
+    const allMessages = await db.query.messages.findMany({
+      where: or(eq(messages.receiverId, buyerId), eq(messages.senderId, buyerId)),
+      with: {
+        sender: { columns: { id: true, name: true, avatar: true } },
+        receiver: { columns: { id: true, name: true, avatar: true } },
+        bike: { columns: { id: true, title: true, brand: true, model: true, images: true } },
+      },
+      orderBy: [desc(messages.createdAt)],
+    });
+
+    // Nhóm theo conversation key (bikeId + đối tác/seller)
+    const conversationMap = new Map<string, any>();
+    for (const msg of allMessages) {
+      const partnerId = msg.senderId === buyerId ? msg.receiverId : msg.senderId;
+      const key = `${msg.bikeId ?? 'general'}_${partnerId}`;
+      
+      const lastMsg = {
+        id: msg.id,
+        content: msg.content,
+        fileUrl: msg.fileUrl,
+        isRead: msg.isRead,
+        createdAt: msg.createdAt,
+        isMine: msg.senderId === buyerId,
+      };
+      
+      if (!conversationMap.has(key)) {
+        conversationMap.set(key, {
+          partner: msg.senderId === buyerId ? msg.receiver : msg.sender,
+          bike: msg.bike,
+          lastMessage: lastMsg,
+        });
+      } else {
+        // Update if this message is more recent (double-check in case of ordering issues)
+        const existing = conversationMap.get(key)!;
+        if (new Date(msg.createdAt) > new Date(existing.lastMessage.createdAt)) {
+          existing.lastMessage = lastMsg;
+        }
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      data: Array.from(conversationMap.values()),
+      message: 'Danh sách cuộc hội thoại fetched successfully',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi khi lấy danh sách tin nhắn',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
  * POST /api/buyer/v1/messages/:sellerId
  * Buyer gửi tin nhắn cho seller về một chiếc xe.
  */
@@ -1037,6 +1100,7 @@ export const sendMessageToSeller = async (req: Request, res: Response) => {
           and(eq(messages.senderId, buyerId), eq(messages.receiverId, sellerId)),
           and(eq(messages.senderId, sellerId), eq(messages.receiverId, buyerId))
         ),
+        orderBy: [desc(messages.createdAt)],
       });
 
       // No existing conversation = cannot initiate
@@ -1055,18 +1119,17 @@ export const sendMessageToSeller = async (req: Request, res: Response) => {
         });
       }
     } else {
-      // For non-admin/inspector: check if conversation is closed
-      const closedConversation = await db.query.messages.findFirst({
-        where: and(
-          or(
-            and(eq(messages.senderId, buyerId), eq(messages.receiverId, sellerId)),
-            and(eq(messages.senderId, sellerId), eq(messages.receiverId, buyerId))
-          ),
-          eq(messages.conversationStatus, 'closed')
+      // For sellers/buyers: check if the LATEST message is closed (not any old closed message)
+      const latestMessage = await db.query.messages.findFirst({
+        where: or(
+          and(eq(messages.senderId, buyerId), eq(messages.receiverId, sellerId)),
+          and(eq(messages.senderId, sellerId), eq(messages.receiverId, buyerId))
         ),
+        orderBy: [desc(messages.createdAt)],
       });
 
-      if (closedConversation) {
+      // Only block if the most recent message is closed. If admin/inspector sent a new active message, allow sending.
+      if (latestMessage?.conversationStatus === 'closed') {
         return res.status(403).json({
           success: false,
           message: 'This conversation has been closed. You cannot send messages.'

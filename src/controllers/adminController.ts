@@ -1031,7 +1031,7 @@ export const closeConversation = async (req: Request, res: Response) => {
         totalMessagesInConversation: conversationMessages.length,
         closedAt: new Date(),
       },
-      message: 'Conversation closed successfully. User can no longer send messages.'
+      message: 'Conversation closed successfully. Messages from user are blocked until you send a new message.'
     };
 
     res.status(200).json(response);
@@ -1140,7 +1140,7 @@ export const sendMessageToUser = async (req: Request, res: Response) => {
         content: content.trim(),
         fileUrl: fileUrl,
         isRead: false,
-        conversationStatus: 'active', // Default to active
+        conversationStatus: 'active', // Reopen closed conversation
       })
       .returning();
 

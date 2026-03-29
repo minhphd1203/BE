@@ -14,6 +14,7 @@ import {
   getSellerBikesForReport,
   getReportReasons,
   addReview,
+  getConversations,
   sendMessageToSeller,
   getMessageWithSeller,
 } from '../controllers/buyerController';
@@ -789,6 +790,22 @@ router.post('/v1/reviews', isAuthenticated, addReview);
  *         description: Unauthorized
  */
 router.post('/v1/messages/:sellerId', isAuthenticated, messageUpload, attachFileUrl, sendMessageToSeller);
+
+/**
+ * @swagger
+ * /api/buyer/v1/messages:
+ *   get:
+ *     summary: Xem danh sách cuộc hội thoại với các seller
+ *     tags: [Buyer]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Danh sách cuộc hội thoại
+ *       401:
+ *         description: Unauthorized
+ */
+router.get('/v1/messages', isAuthenticated, getConversations);
 
 /**
  * @swagger
