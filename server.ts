@@ -48,6 +48,10 @@ const inspectionsUploadStatic = path.join(process.cwd(), 'uploads', 'inspections
 fs.mkdirSync(inspectionsUploadStatic, { recursive: true });
 app.use('/uploads/inspections', express.static(inspectionsUploadStatic));
 
+const messagesUploadStatic = path.join(process.cwd(), 'uploads', 'messages');
+fs.mkdirSync(messagesUploadStatic, { recursive: true });
+app.use('/uploads/messages', express.static(messagesUploadStatic));
+
 // Request logger
 app.use((req, res, next) => {
   const start = Date.now();

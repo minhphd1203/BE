@@ -10,9 +10,9 @@ export function ensureBikesUploadDir(): void {
   fs.mkdirSync(BIKES_UPLOAD_DIR, { recursive: true });
 }
 
-/** URL công khai cho file đã upload (local: APP_URL=http://localhost:3000) */
+/** URL công khai cho file đã upload (local: BACKEND_URL=http://localhost:3000) */
 export function publicBikeMediaUrl(filename: string): string {
-  const base = (process.env.APP_URL || process.env.PUBLIC_URL || '').replace(/\/$/, '');
+  const base = (process.env.BACKEND_URL || process.env.APP_URL || process.env.PUBLIC_URL || '').replace(/\/$/, '');
   const p = `/uploads/bikes/${filename}`;
   return base ? `${base}${p}` : p;
 }

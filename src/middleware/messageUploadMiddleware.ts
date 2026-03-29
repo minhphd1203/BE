@@ -10,9 +10,9 @@ export function ensureMessagesUploadDir(): void {
   fs.mkdirSync(MESSAGES_UPLOAD_DIR, { recursive: true });
 }
 
-/** URL công khai cho file đã upload (local: APP_URL=http://localhost:3000) */
+/** URL công khai cho file đã upload (backend: BACKEND_URL=http://localhost:3000) */
 export function publicMessageMediaUrl(filename: string): string {
-  const base = (process.env.APP_URL || process.env.PUBLIC_URL || '').replace(/\/$/, '');
+  const base = (process.env.BACKEND_URL || process.env.APP_URL || process.env.PUBLIC_URL || '').replace(/\/$/, '');
   const p = `/uploads/messages/${filename}`;
   return base ? `${base}${p}` : p;
 }

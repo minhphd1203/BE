@@ -1015,6 +1015,7 @@ export const getConversations = async (req: Request, res: Response) => {
           lastMessage: {
             id: msg.id,
             content: msg.content,
+            fileUrl: msg.fileUrl,
             isRead: msg.isRead,
             createdAt: msg.createdAt,
             isMine: msg.senderId === sellerId,
@@ -1083,6 +1084,17 @@ export const getMessageHistory = async (req: Request, res: Response) => {
 
     const history = await db.query.messages.findMany({
       where: and(...filters),
+      columns: {
+        id: true,
+        senderId: true,
+        receiverId: true,
+        content: true,
+        fileUrl: true,
+        bikeId: true,
+        isRead: true,
+        conversationStatus: true,
+        createdAt: true,
+      },
       with: {
         sender: { columns: { id: true, name: true, avatar: true } },
       },

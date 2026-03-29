@@ -1,8 +1,9 @@
 import { Request, Response } from 'express';
+import jwt from 'jsonwebtoken';
 import { db } from '../db';
 import { users, transactions, bikes } from '../db/schema';
 import { eq, and, ne } from 'drizzle-orm';
-import { ApiResponse } from '../models';
+import { ApiResponse, JwtPayload } from '../models';
 
 /**
  * POST /api/profile/v1/upgrade-seller
@@ -49,9 +50,20 @@ export const upgradeToSeller = async (req: Request, res: Response) => {
         updatedAt: users.updatedAt,
       });
 
+    // Generate new JWT token with updated role
+    const jwtPayload: JwtPayload = {
+      userId: updatedUser.id,
+      email: updatedUser.email,
+      role: updatedUser.role,
+    };
+
+    const newToken = jwt.sign(jwtPayload, process.env.JWT_SECRET as string, {
+      expiresIn: '24h',
+    });
+
     const response: ApiResponse = {
       success: true,
-      data: updatedUser,
+      data: { ...updatedUser, token: newToken },
       message: 'Successfully upgraded to seller! You can now start selling bikes.',
     };
 
@@ -139,9 +151,20 @@ export const downgradeFromSeller = async (req: Request, res: Response) => {
         updatedAt: users.updatedAt,
       });
 
+    // Generate new JWT token with updated role
+    const jwtPayload: JwtPayload = {
+      userId: updatedUser.id,
+      email: updatedUser.email,
+      role: updatedUser.role,
+    };
+
+    const newToken = jwt.sign(jwtPayload, process.env.JWT_SECRET as string, {
+      expiresIn: '24h',
+    });
+
     const response: ApiResponse = {
       success: true,
-      data: updatedUser,
+      data: { ...updatedUser, token: newToken },
       message: 'Successfully downgraded to buyer. Your listings have been hidden but can be reactivated if you become a seller again.',
     };
 
