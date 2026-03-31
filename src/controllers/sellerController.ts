@@ -1111,13 +1111,11 @@ export const getMessageHistory = async (req: Request, res: Response) => {
         });
       }
       
-      // Include messages that either match bikeId OR are from admin (senderRole = 'admin')
+      // Only include messages that match this specific bikeId
+      // This prevents admin messages for other conversations from leaking in
       finalFilter = and(
         baseFilter,
-        or(
-          eq(messages.bikeId, bid),
-          eq(messages.senderRole, 'admin')
-        )
+        eq(messages.bikeId, bid)
       );
     } else {
       finalFilter = baseFilter;

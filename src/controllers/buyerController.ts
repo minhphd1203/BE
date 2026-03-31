@@ -1467,20 +1467,18 @@ export const getMessageWithSeller = async (req: Request, res: Response) => {
 
     let finalFilter: any;
 
-    // If bikeId provided, add it to filter (but allow admin messages without bikeId)
+    // If bikeId provided, add it to filter
     if (bikeId) {
       const bid = String(bikeId);
       if (!UUID_REGEX.test(bid)) {
         return res.status(400).json({ success: false, message: 'bikeId query không đúng định dạng UUID' });
       }
       
-      // Include messages that either match bikeId OR are from admin (senderRole = 'admin')
+      // Only include messages that match this specific bikeId
+      // This prevents admin messages for other conversations from leaking in
       finalFilter = and(
         baseFilter,
-        or(
-          eq(messages.bikeId, bid),
-          eq(messages.senderRole, 'admin')
-        )
+        eq(messages.bikeId, bid)
       );
     } else {
       finalFilter = baseFilter;

@@ -1,5 +1,5 @@
 import express from 'express';
-import { register, login, logout } from '../controllers/authController';
+import { register, login, logout, checkRoles } from '../controllers/authController';
 import { isAuthenticated } from '../middleware/authMiddleware';
 
 const router = express.Router();
@@ -119,6 +119,60 @@ router.post('/register', register);
  *         description: Sai email hoặc password
  */
 router.post('/login', login);
+
+/**
+ * @swagger
+ * /api/auth/check-roles:
+ *   post:
+ *     summary: Kiểm tra các roles có sẵn cho email (cho multi-role login)
+ *     tags: [Auth]
+ *     security: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: user@example.com
+ *               password:
+ *                 type: string
+ *                 example: Test@123
+ *     responses:
+ *       200:
+ *         description: Trả về danh sách roles có sẵn
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     email:
+ *                       type: string
+ *                     roles:
+ *                       type: array
+ *                       items:
+ *                         type: string
+ *                         enum: [buyer, seller]
+ *                       example: [buyer, seller]
+ *                     hasMultipleRoles:
+ *                       type: boolean
+ *                       example: true
+ *       401:
+ *         description: Email không tìm thấy hoặc sai mật khẩu
+ */
+router.post('/check-roles', checkRoles);
 
 /**
  * @swagger

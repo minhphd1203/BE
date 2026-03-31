@@ -6,6 +6,56 @@ import { users } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { ApiResponse, JwtPayload } from '../models';
 
+// Kiểm tra available roles cho email
+export const checkRoles = async (req: Request, res: Response) => {
+  try {
+    const { email, password } = req.body;
+
+    // Tìm TẤT CẢ users với email này
+    const allUsers = await db.query.users.findMany({
+      where: eq(users.email, email),
+    });
+
+    if (!allUsers.length) {
+      return res.status(401).json({
+        success: false,
+        message: 'Email not found',
+      });
+    }
+
+    // Kiểm tra password với user đầu tiên (tất cả có cùng password)
+    const isValidPassword = await bcrypt.compare(password, allUsers[0].password);
+
+    if (!isValidPassword) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid email or password',
+      });
+    }
+
+    // Lấy danh sách roles
+    const roles = allUsers.map(u => u.role);
+
+    const response: ApiResponse = {
+      success: true,
+      data: {
+        email,
+        roles,
+        hasMultipleRoles: roles.length > 1,
+      },
+      message: 'Roles available for this email',
+    };
+
+    res.status(200).json(response);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error checking roles',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
 // Đăng ký
 export const register = async (req: Request, res: Response) => {
   try {
@@ -77,14 +127,21 @@ export const login = async (req: Request, res: Response) => {
   try {
     const { email, password, role } = req.body;
 
-    // If role is not provided, try to find any user with that email
-    const whereCondition = role 
-      ? and(eq(users.email, email), eq(users.role, role))
-      : eq(users.email, email);
+    // Role là bắt buộc (buyer, seller, admin, inspector)
+    const validRoles = ['buyer', 'seller', 'admin', 'inspector'];
+    if (!role || !validRoles.includes(role)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Role must be specified and be one of: buyer, seller, admin, inspector',
+      });
+    }
 
-    // Tìm user
+    // Tìm user với email + role cụ thể
     const user = await db.query.users.findFirst({
-      where: whereCondition,
+      where: and(
+        eq(users.email, email),
+        eq(users.role, role)
+      ),
     });
 
     if (!user) {
