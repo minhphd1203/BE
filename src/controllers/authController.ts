@@ -3,23 +3,34 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { db } from '../db';
 import { users } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { ApiResponse, JwtPayload } from '../models';
 
 // Đăng ký
 export const register = async (req: Request, res: Response) => {
   try {
-    const { email, password, name, phone } = req.body;
+    const { email, password, name, phone, role } = req.body;
 
-    // Kiểm tra email đã tồn tại
+    // Validate role
+    if (!role || !['buyer', 'seller'].includes(role)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid role. Role must be either "buyer" or "seller"',
+      });
+    }
+
+    // Kiểm tra email + role đã tồn tại
     const existingUser = await db.query.users.findFirst({
-      where: eq(users.email, email),
+      where: and(
+        eq(users.email, email),
+        eq(users.role, role)
+      ),
     });
 
     if (existingUser) {
       return res.status(400).json({
         success: false,
-        message: 'Email already exists',
+        message: `An account with this email already exists as a ${role}`,
       });
     }
 
@@ -34,7 +45,7 @@ export const register = async (req: Request, res: Response) => {
         password: hashedPassword,
         name,
         phone: phone || null,
-        role: 'buyer', 
+        role, 
       })
       .returning({
         id: users.id,
@@ -64,11 +75,16 @@ export const register = async (req: Request, res: Response) => {
 // Đăng nhập
 export const login = async (req: Request, res: Response) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, role } = req.body;
+
+    // If role is not provided, try to find any user with that email
+    const whereCondition = role 
+      ? and(eq(users.email, email), eq(users.role, role))
+      : eq(users.email, email);
 
     // Tìm user
     const user = await db.query.users.findFirst({
-      where: eq(users.email, email),
+      where: whereCondition,
     });
 
     if (!user) {

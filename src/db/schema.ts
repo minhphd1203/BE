@@ -1,10 +1,10 @@
-import { pgTable, uuid, varchar, timestamp, integer, doublePrecision, text, boolean } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, timestamp, integer, doublePrecision, text, boolean, uniqueIndex } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
 // User table
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
-  email: varchar('email', { length: 255 }).notNull().unique(),
+  email: varchar('email', { length: 255 }).notNull(),
   password: varchar('password', { length: 255 }).notNull(),
   name: varchar('name', { length: 255 }).notNull(),
   phone: varchar('phone', { length: 50 }),
@@ -12,6 +12,11 @@ export const users = pgTable('users', {
   role: varchar('role', { length: 50 }).notNull().default('user'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
+},
+(table) => {
+  return {
+    emailRoleUnique: uniqueIndex('email_role_unique').on(table.email, table.role),
+  };
 });
 
 // Category table
