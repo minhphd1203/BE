@@ -641,16 +641,30 @@ router.delete('/v1/bikes/:bikeId', isAdmin, deleteBike);
  * @swagger
  * /api/admin/v1/conversations/{userId}/close:
  *   post:
- *     summary: Close a conversation with buyer/seller (admin can contact them anytime)
+ *     summary: Close conversation thread(s) with user
  *     description: |
- *       Admin/Inspector can close active conversations with users.
+ *       Admin can close conversation thread(s) with a user.
+ *       Behavior depends on query parameters provided:
+ *       
+ *       **Without parameters (close ALL threads):**
+ *       - `POST /conversations/:userId/close`
+ *       - Closes ALL conversation threads with this user (all bikeIds, all roles)
+ *       
+ *       **With bikeId (close specific bike thread):**
+ *       - `POST /conversations/:userId/close?bikeId=xxx`
+ *       - Closes only the conversation thread about that specific bike
+ *       - Other bike conversations remain open
+ *       
+ *       **With bikeId + targetRole (close specific role thread):**
+ *       - `POST /conversations/:userId/close?bikeId=xxx&targetRole=seller`
+ *       - Closes only that specific bike-seller conversation thread
+ *       - Other role conversations about same bike remain open
  *       
  *       **When closed:**
- *       - User cannot send messages to this admin/inspector
- *       - User sees error: "This conversation has been closed"
- *       - Admin can start a new conversation anytime by messaging the user
+ *       - User cannot send messages in closed thread(s)
+ *       - Admin can reopen by sending a new message
  *       
- *       **Use case:** After resolving an issue, admin closes to prevent spam/unnecessary contact.
+ *       **Use case:** Close conversation about one bike without affecting conversations about other bikes, or close all threads at once.
  *     tags: [Admin - Conversations]
  *     security:
  *       - bearerAuth: []
@@ -662,9 +676,23 @@ router.delete('/v1/bikes/:bikeId', isAdmin, deleteBike);
  *           type: string
  *           format: uuid
  *         description: User ID (buyer or seller) to close conversation with
+ *       - in: query
+ *         name: bikeId
+ *         required: false
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Bike ID - closes only conversation about this bike. Omit to close ALL threads.
+ *       - in: query
+ *         name: targetRole
+ *         required: false
+ *         schema:
+ *           type: string
+ *           enum: [buyer, seller, inspector]
+ *         description: User role - closes only thread with this role. Only used with bikeId.
  *     responses:
  *       200:
- *         description: Conversation closed successfully
+ *         description: Conversation thread(s) closed successfully
  *         content:
  *           application/json:
  *             schema:
@@ -678,6 +706,13 @@ router.delete('/v1/bikes/:bikeId', isAdmin, deleteBike);
  *                     userId:
  *                       type: string
  *                       format: uuid
+ *                     bikeId:
+ *                       type: string
+ *                       format: uuid
+ *                       example: "xxx or 'all'"
+ *                     targetRole:
+ *                       type: string
+ *                       example: "seller or 'all'"
  *                     conversationStatus:
  *                       type: string
  *                       example: "closed"
@@ -687,7 +722,9 @@ router.delete('/v1/bikes/:bikeId', isAdmin, deleteBike);
  *                       type: string
  *                       format: date-time
  *       404:
- *         description: No conversation found with this user
+ *         description: No conversation found with specified parameters
+ *       400:
+ *         description: Invalid parameters (bad UUID format or invalid role)
  *       401:
  *         description: Unauthorized
  */
@@ -697,12 +734,16 @@ router.post('/v1/conversations/:userId/close', isAdmin, closeConversation);
 
 /**
  * @swagger
- * /api/admin/v1/messages/{userId}:
+ * /api/admin/v1/messages:
  *   post:
  *     summary: Admin sends message to user
  *     description: |
  *       Admin can freely send messages to any user (buyer/seller/inspector).
- *       No restrictions on who admin can message.
+ *       
+ *       **Conversation Modes:**
+ *       - `userId` only: Send message to user (general conversation, no bike context)
+ *       - `bikeId` only: Send message to bike's seller (conversation tied to that bike)
+ *       - `userId + bikeId`: Send message to user about a specific bike (separate conversation per bike - allows multiple threads with same user about different bikes)
  *       
  *       **Supports file/image attachments:**
  *       - Upload single file via `attachment` form field (multipart/form-data)
@@ -723,14 +764,6 @@ router.post('/v1/conversations/:userId/close', isAdmin, closeConversation);
  *     tags: [Admin - Conversations]
  *     security:
  *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: userId
- *         required: true
- *         schema:
- *           type: string
- *           format: uuid
- *         description: Target user ID (buyer, seller, or other admin/inspector)
  *     requestBody:
  *       required: true
  *       content:
@@ -743,10 +776,14 @@ router.post('/v1/conversations/:userId/close', isAdmin, closeConversation);
  *               content:
  *                 type: string
  *                 description: Message content (required, non-empty)
+ *               userId:
+ *                 type: string
+ *                 format: uuid
+ *                 description: Target user ID - optional when bikeId provided alone, required for user-specific messages
  *               bikeId:
  *                 type: string
  *                 format: uuid
- *                 description: Optional bike ID reference (for bike-related conversations)
+ *                 description: Target bike ID - when provided alone, auto-addresses to seller; when with userId, creates separate conversation thread per bike
  *               attachment:
  *                 type: string
  *                 format: binary

@@ -34,7 +34,7 @@ export const upgradeToSeller = async (req: Request, res: Response) => {
       });
     }
 
-    // Update role to seller
+    // Update role to seller (no automatic status changes on bikes)
     const [updatedUser] = await db
       .update(users)
       .set({ role: 'seller', updatedAt: new Date() })
@@ -124,18 +124,7 @@ export const downgradeFromSeller = async (req: Request, res: Response) => {
       });
     }
 
-    // Hide all active listings (don't delete)
-    await db
-      .update(bikes)
-      .set({ status: 'hidden', updatedAt: new Date() })
-      .where(
-        and(
-          eq(bikes.sellerId, userId),
-          ne(bikes.status, 'sold')
-        )
-      );
-
-    // Update role to buyer
+    // Update role to buyer (no automatic status changes on bikes)
     const [updatedUser] = await db
       .update(users)
       .set({ role: 'buyer', updatedAt: new Date() })

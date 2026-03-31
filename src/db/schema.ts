@@ -124,6 +124,8 @@ export const messages = pgTable('messages', {
   senderId: uuid('sender_id').notNull().references(() => users.id),
   receiverId: uuid('receiver_id').notNull().references(() => users.id),
   bikeId: uuid('bike_id').references(() => bikes.id), // context bike (optional)
+  senderRole: varchar('sender_role', { length: 50 }).notNull().default('buyer'), // 'buyer' or 'seller' - role of sender when message was sent
+  receiverRole: varchar('receiver_role', { length: 50 }).notNull().default('seller'), // 'buyer' or 'seller' - role of receiver when message was sent
   content: text('content').notNull(),
   isRead: boolean('is_read').notNull().default(false),
   // File attachment (image/document URL - optional)

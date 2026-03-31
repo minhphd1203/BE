@@ -1,13 +1,39 @@
 import { Request, Response } from 'express';
 import { db } from '../db';
-import { bikes, transactions, wishlists, reports, messages, reviews, users, reportReasons } from '../db/schema';
-import { desc, eq, and, ilike, lte, gte, or, inArray, type SQL } from 'drizzle-orm';
+import { bikes, categories, transactions, wishlists, reports, messages, reviews, users, reportReasons } from '../db/schema';
+import { desc, eq, and, ilike, lte, gte, or, inArray, ne, type SQL } from 'drizzle-orm';
 import { ApiResponse } from '../models';
 import { TRANSACTION_TYPE_OPTIONS, TRANSACTION_TYPES } from '../constants/transactionTypes';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ============= SEARCH & BROWSE BIKES =============
+
+/**
+ * Get all categories
+ * Public endpoint: không cần JWT, ai cũng gọi được
+ */
+export const getCategories = async (req: Request, res: Response) => {
+  try {
+    const allCategories = await db.query.categories.findMany({
+      orderBy: [desc(categories.createdAt)],
+    });
+
+    const response: ApiResponse = {
+      success: true,
+      data: allCategories,
+      message: 'Categories fetched successfully',
+    };
+
+    res.status(200).json(response);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching categories',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
 
 /**
  * Search bikes with filters (brand, model, price range, condition, etc.)
@@ -32,6 +58,8 @@ export const searchBikes = async (req: Request, res: Response) => {
     const {
       brand,
       model,
+      title,
+      categoryId,
       minPrice,
       maxPrice,
       condition,
@@ -42,15 +70,36 @@ export const searchBikes = async (req: Request, res: Response) => {
       limit = 10,
     } = req.query;
 
-    // Build optional filters
-    const optionalFilters = [];
-    
-    if (brand) {
-      optionalFilters.push(ilike(bikes.brand, `%${brand}%`));
-    }
+    // Validate and normalize search parameters
+    const normalizedBrand = brand ? String(brand).trim() : null;
+    const normalizedModel = model ? String(model).trim() : null;
+    const normalizedTitle = title ? String(title).trim() : null;
 
-    if (model) {
-      optionalFilters.push(ilike(bikes.model, `%${model}%`));
+    // Build optional filters
+    const optionalFilters: SQL[] = [];
+    
+    // If any search keywords provided, use OR logic across all fields
+    if (normalizedBrand || normalizedModel || normalizedTitle) {
+      const filters: SQL[] = [];
+      
+      if (normalizedBrand) {
+        filters.push(ilike(bikes.brand, `%${normalizedBrand}%`));
+      }
+      
+      if (normalizedModel) {
+        filters.push(ilike(bikes.model, `%${normalizedModel}%`));
+      }
+      
+      if (normalizedTitle) {
+        filters.push(ilike(bikes.title, `%${normalizedTitle}%`));
+      }
+      
+      if (filters.length > 0) {
+        const orFilter = or(...filters);
+        if (orFilter) {
+          optionalFilters.push(orFilter);
+        }
+      }
     }
 
     if (minPrice) {
@@ -67,6 +116,10 @@ export const searchBikes = async (req: Request, res: Response) => {
 
     if (color) {
       optionalFilters.push(ilike(bikes.color, `%${color}%`));
+    }
+
+    if (categoryId) {
+      optionalFilters.push(eq(bikes.categoryId, categoryId as string));
     }
 
     // Determine sort field
@@ -87,9 +140,14 @@ export const searchBikes = async (req: Request, res: Response) => {
 
     // Khách (chưa đăng nhập): chỉ thấy xe đã duyệt công khai (approved).
     // Đã đăng nhập: thêm xe reserved của mình (seller) hoặc xe đã đặt cọc xong (buyer).
+    // Hidden bikes: chỉ visible cho seller (chủ sở hữu), không visible cho buyer nào khác
     const statusFilterParts: SQL[] = [eq(bikes.status, 'approved')];
 
     if (userId) {
+      // Include own hidden bikes (only for the owner)
+      const ownHidden = and(eq(bikes.status, 'hidden'), eq(bikes.sellerId, userId));
+      if (ownHidden) statusFilterParts.push(ownHidden);
+
       const allReservedBikes = await db.query.bikes.findMany({
         where: eq(bikes.status, 'reserved'),
         columns: { id: true },
@@ -116,6 +174,8 @@ export const searchBikes = async (req: Request, res: Response) => {
         const buyerReserved = and(eq(bikes.status, 'reserved'), inArray(bikes.id, myReservedBikeIds));
         if (buyerReserved) statusFilterParts.push(buyerReserved);
       }
+    } else {
+      // Guest: can only see approved bikes
     }
 
     const finalStatusFilter = or(...statusFilterParts);
@@ -254,22 +314,42 @@ export const getBikeDetail = async (req: Request, res: Response) => {
 
     const isOwner = !!userId && bike.sellerId === userId;
     let canView = bike.status === 'approved';
-
+    
+    // Sellers can always view their own bikes (any status)
     if (!canView && isOwner) {
       canView = true;
     }
 
-    if (!canView && userId && bike.status === 'reserved') {
-      const deposit = await db.query.transactions.findFirst({
+    // Reserved or Sold bikes: buyer can view if they have transaction or wishlist
+    if (!canView && userId && (bike.status === 'reserved' || bike.status === 'sold')) {
+      // Check if buyer has completed transaction on this bike
+      const hasTransaction = await db.query.transactions.findFirst({
         where: and(
           eq(transactions.bikeId, bikeId),
           eq(transactions.buyerId, userId),
-          eq(transactions.transactionType, 'deposit'),
+          or(
+            eq(transactions.transactionType, 'deposit'),
+            eq(transactions.transactionType, 'full_payment'),
+            eq(transactions.transactionType, 'remaining_payment')
+          ),
           eq(transactions.status, 'completed')
         ),
       });
-      if (deposit) {
+      
+      if (hasTransaction) {
         canView = true;
+      } else {
+        // Check if bike is in buyer's wishlist
+        const inWishlist = await db.query.wishlists.findFirst({
+          where: and(
+            eq(wishlists.userId, userId),
+            eq(wishlists.bikeId, bikeId)
+          ),
+        });
+        
+        if (inWishlist) {
+          canView = true;
+        }
       }
     }
 
@@ -306,6 +386,13 @@ export const getBikeDetail = async (req: Request, res: Response) => {
 export const createTransaction = async (req: Request, res: Response) => {
   try {
     const buyerId = req.user!.userId;
+    const userRole = req.user!.role;
+
+    // Only buyers can create transactions
+    if (userRole === 'seller') {
+      return res.status(403).json({ success: false, message: 'Sellers cannot purchase bikes' });
+    }
+
     const { bikeId, amount, transactionType = 'full_payment', paymentMethod, notes } = req.body;
 
     if (!bikeId) {
@@ -442,6 +529,13 @@ export const createTransaction = async (req: Request, res: Response) => {
 export const getMyTransactions = async (req: Request, res: Response) => {
   try {
     const buyerId = req.user!.userId;
+    const userRole = req.user!.role;
+
+    // Only buyers can view their transactions
+    if (userRole === 'seller') {
+      return res.status(403).json({ success: false, message: 'Sellers cannot view buyer transactions' });
+    }
+
     const { status, page = 1, limit = 10 } = req.query;
 
     const filters: any[] = [eq(transactions.buyerId, buyerId)];
@@ -485,12 +579,91 @@ export const getMyTransactions = async (req: Request, res: Response) => {
 };
 
 /**
+ * GET /api/buyer/v1/transactions/:id
+ * Buyer xem chi tiết một đơn đặt mua.
+ */
+export const getTransactionDetail = async (req: Request, res: Response) => {
+  try {
+    const buyerId = req.user!.userId;
+    const transactionId = req.params.id as string;
+
+    if (!UUID_REGEX.test(transactionId)) {
+      return res.status(400).json({ success: false, message: 'ID giao dịch không đúng định dạng' });
+    }
+
+    const transaction = await db.query.transactions.findFirst({
+      where: and(eq(transactions.id, transactionId), eq(transactions.buyerId, buyerId)),
+      columns: {
+        id: true,
+        buyerId: true,
+        bikeId: true,
+        sellerId: true,
+        status: true,
+        transactionType: true,
+        amount: true,
+        remainingBalance: true,
+        paymentMethod: true,
+        createdAt: true,
+        updatedAt: true,
+        notes: true,
+      },
+      with: {
+        bike: {
+          columns: {
+            id: true,
+            title: true,
+            brand: true,
+            model: true,
+            year: true,
+            price: true,
+            images: true,
+            description: true,
+            condition: true,
+            mileage: true,
+            color: true,
+          },
+        },
+        seller: {
+          columns: { id: true, name: true, avatar: true, phone: true },
+        },
+      },
+    });
+
+    if (!transaction) {
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy đơn mua\nĐơn mua mã không hợp lệ hoặc không thuộc tài khoản của bạn.',
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: transaction,
+      message: 'Chi tiết giao dịch fetched successfully',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi khi lấy chi tiết giao dịch',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
  * DELETE /api/buyer/v1/transactions/:id
  * Buyer hủy đơn đặt mua (chỉ khi còn pending hoặc approved, trước khi hoàn tất thanh toán).
  */
 export const cancelTransaction = async (req: Request, res: Response) => {
   try {
     const buyerId = req.user!.userId;
+    const userRole = req.user!.role;
+
+    // Only buyers can cancel transactions
+    if (userRole === 'seller') {
+      return res.status(403).json({ success: false, message: 'Sellers cannot cancel buyer transactions' });
+    }
+
     const id = req.params.id as string;
 
     if (!UUID_REGEX.test(id)) {
@@ -538,6 +711,13 @@ export const cancelTransaction = async (req: Request, res: Response) => {
 export const getWishlist = async (req: Request, res: Response) => {
   try {
     const userId = req.user!.userId;
+    const userRole = req.user!.role;
+
+    // Only buyers can have wishlist
+    if (userRole === 'seller') {
+      return res.status(403).json({ success: false, message: 'Sellers cannot have wishlist' });
+    }
+
     const { page = 1, limit = 10 } = req.query;
 
     const pageNum = parseInt(page as string) || 1;
@@ -587,6 +767,13 @@ export const getWishlist = async (req: Request, res: Response) => {
 export const addToWishlist = async (req: Request, res: Response) => {
   try {
     const userId = req.user!.userId;
+    const userRole = req.user!.role;
+
+    // Only buyers can add to wishlist
+    if (userRole === 'seller') {
+      return res.status(403).json({ success: false, message: 'Sellers cannot add to wishlist' });
+    }
+
     const bikeId = req.params.bikeId as string;
 
     if (!UUID_REGEX.test(bikeId)) {
@@ -596,6 +783,11 @@ export const addToWishlist = async (req: Request, res: Response) => {
     const bike = await db.query.bikes.findFirst({ where: eq(bikes.id, bikeId) });
     if (!bike) {
       return res.status(404).json({ success: false, message: 'Xe không tồn tại' });
+    }
+
+    // Cannot add hidden bikes (owner's downgraded bikes) to wishlist
+    if (bike.status === 'hidden' && bike.sellerId === userId) {
+      return res.status(400).json({ success: false, message: 'Không thể thêm xe ẩn vào danh sách yêu thích' });
     }
 
     const existing = await db.query.wishlists.findFirst({
@@ -625,6 +817,13 @@ export const addToWishlist = async (req: Request, res: Response) => {
 export const removeFromWishlist = async (req: Request, res: Response) => {
   try {
     const userId = req.user!.userId;
+    const userRole = req.user!.role;
+
+    // Only buyers can remove from wishlist
+    if (userRole === 'seller') {
+      return res.status(403).json({ success: false, message: 'Sellers cannot remove from wishlist' });
+    }
+
     const bikeId = req.params.bikeId as string;
 
     if (!UUID_REGEX.test(bikeId)) {
@@ -764,6 +963,13 @@ export const getReportReasons = async (req: Request, res: Response) => {
 export const submitReport = async (req: Request, res: Response) => {
   try {
     const reporterId = req.user!.userId;
+    const userRole = req.user!.role;
+
+    // Only buyers can submit reports
+    if (userRole === 'seller') {
+      return res.status(403).json({ success: false, message: 'Sellers cannot submit reports' });
+    }
+
     const { reportedUserId, reportedBikeId, reasonId, reasonText, description } = req.body;
 
     // Validate: reasonId must be provided
@@ -786,6 +992,17 @@ export const submitReport = async (req: Request, res: Response) => {
         success: false,
         message: 'Phải cung cấp ít nhất reportedUserId hoặc reportedBikeId',
       });
+    }
+
+    // Cannot report on hidden bikes (owner's downgraded bikes)
+    if (reportedBikeId) {
+      const reportedBike = await db.query.bikes.findFirst({
+        where: eq(bikes.id, reportedBikeId),
+        columns: { status: true, sellerId: true },
+      });
+      if (reportedBike?.status === 'hidden' && reportedBike.sellerId === reporterId) {
+        return res.status(400).json({ success: false, message: 'Không thể báo cáo xe ẩn của chính mình' });
+      }
     }
 
     // Check if reasonId is "others" (special case for violations outside system)
@@ -870,6 +1087,13 @@ export const submitReport = async (req: Request, res: Response) => {
 export const getMyReports = async (req: Request, res: Response) => {
   try {
     const reporterId = req.user!.userId;
+    const userRole = req.user!.role;
+
+    // Only buyers can view their reports
+    if (userRole === 'seller') {
+      return res.status(403).json({ success: false, message: 'Sellers cannot view buyer reports' });
+    }
+
     const { status, page = 1, limit = 10 } = req.query;
 
     const filters: any[] = [eq(reports.reporterId, reporterId)];
@@ -937,6 +1161,13 @@ export const getMyReports = async (req: Request, res: Response) => {
 export const addReview = async (req: Request, res: Response) => {
   try {
     const reviewerId = req.user!.userId;
+    const userRole = req.user!.role;
+
+    // Only buyers can add reviews
+    if (userRole === 'seller') {
+      return res.status(403).json({ success: false, message: 'Sellers cannot add reviews' });
+    }
+
     const { sellerId, transactionId, rating, comment } = req.body;
 
     if (!sellerId) {
@@ -1022,8 +1253,19 @@ export const getConversations = async (req: Request, res: Response) => {
     });
 
     // Nhóm theo conversation key (bikeId + đối tác/seller)
+    // Filter: Show sent messages only if senderRole='buyer', show received messages only if receiverRole='buyer'
+    // Exception: Always show messages from admin (senderRole='admin') regardless of receiverRole
     const conversationMap = new Map<string, any>();
     for (const msg of allMessages) {
+      // Skip messages where this user was sender but senderRole doesn't match current role
+      if (msg.senderId === buyerId && msg.senderRole !== 'buyer') {
+        continue; // Skip messages sent in seller role
+      }
+      // Skip messages where this user was receiver but receiverRole doesn't match current role
+      // EXCEPTION: Always show admin messages (senderRole='admin')
+      if (msg.receiverId === buyerId && msg.senderRole !== 'admin' && msg.receiverRole !== 'buyer') {
+        continue; // Skip messages received in seller role (only if not from admin)
+      }
       const partnerId = msg.senderId === buyerId ? msg.receiverId : msg.senderId;
       const key = `${msg.bikeId ?? 'general'}_${partnerId}`;
       
@@ -1088,6 +1330,17 @@ export const sendMessageToSeller = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Không thể gửi tin nhắn cho chính mình' });
     }
 
+    // Cannot message about hidden bikes (if bikeId provided and it's hidden and belongs to buyer)
+    if (bikeId) {
+      const contextBike = await db.query.bikes.findFirst({
+        where: eq(bikes.id, bikeId),
+        columns: { status: true, sellerId: true },
+      });
+      if (contextBike?.status === 'hidden' && contextBike.sellerId === buyerId) {
+        return res.status(400).json({ success: false, message: 'Không thể nhắn tin về xe ẩn của chính mình' });
+      }
+    }
+
     const [sellerRow] = await db.select({ id: users.id, role: users.role }).from(users).where(eq(users.id, sellerId)).limit(1);
     if (!sellerRow) {
       return res.status(400).json({ success: false, message: 'Seller không tồn tại trong hệ thống' });
@@ -1115,7 +1368,7 @@ export const sendMessageToSeller = async (req: Request, res: Response) => {
       if (existingConversation.conversationStatus === 'closed') {
         return res.status(403).json({
           success: false,
-          message: 'This conversation has been closed. You cannot send messages.'
+          message: 'Conversation closed'
         });
       }
     } else {
@@ -1132,7 +1385,7 @@ export const sendMessageToSeller = async (req: Request, res: Response) => {
       if (latestMessage?.conversationStatus === 'closed') {
         return res.status(403).json({
           success: false,
-          message: 'This conversation has been closed. You cannot send messages.'
+          message: 'Conversation closed'
         });
       }
     }
@@ -1169,6 +1422,8 @@ export const sendMessageToSeller = async (req: Request, res: Response) => {
         senderId: buyerId,
         receiverId: sellerId,
         bikeId: resolvedBikeId,
+        senderRole: 'buyer', // Track that buyer sent this message
+        receiverRole: 'seller', // Track that seller receives this message
         content: content.trim(),
         fileUrl: fileUrl,
         isRead: false,
@@ -1204,19 +1459,35 @@ export const getMessageWithSeller = async (req: Request, res: Response) => {
     const limitNum = parseInt(limit as string) || 30;
     const offset = (pageNum - 1) * limitNum;
 
-    const filters: any[] = [
-      or(
-        and(eq(messages.senderId, buyerId), eq(messages.receiverId, sellerId)),
-        and(eq(messages.senderId, sellerId), eq(messages.receiverId, buyerId))
-      ),
-    ];
+    // Base filter: messages between buyer and seller/admin
+    const baseFilter = or(
+      and(eq(messages.senderId, buyerId), eq(messages.receiverId, sellerId)),
+      and(eq(messages.senderId, sellerId), eq(messages.receiverId, buyerId))
+    );
 
+    let finalFilter: any;
+
+    // If bikeId provided, add it to filter (but allow admin messages without bikeId)
     if (bikeId) {
-      filters.push(eq(messages.bikeId, bikeId as string));
+      const bid = String(bikeId);
+      if (!UUID_REGEX.test(bid)) {
+        return res.status(400).json({ success: false, message: 'bikeId query không đúng định dạng UUID' });
+      }
+      
+      // Include messages that either match bikeId OR are from admin (senderRole = 'admin')
+      finalFilter = and(
+        baseFilter,
+        or(
+          eq(messages.bikeId, bid),
+          eq(messages.senderRole, 'admin')
+        )
+      );
+    } else {
+      finalFilter = baseFilter;
     }
 
     const history = await db.query.messages.findMany({
-      where: and(...filters),
+      where: finalFilter,
       with: {
         sender: { columns: { id: true, name: true, avatar: true } },
       },
@@ -1249,16 +1520,21 @@ export const getMessageWithSeller = async (req: Request, res: Response) => {
 
 /**
  * Get recommended bikes (latest approved bikes)
- * Shows approved bikes that haven't been verified yet
- * Verification happens after buyer decides to buy
+ * Shows approved bikes to all users
+ * Sellers can also see their own hidden bikes
  */
 export const getRecommendedBikes = async (req: Request, res: Response) => {
   try {
+    const userId = req.user?.userId;
     const { limit = 10 } = req.query;
 
+    // Include hidden bikes only for their owner (seller)
+    const statusFilter = userId 
+      ? or(eq(bikes.status, 'approved'), and(eq(bikes.status, 'hidden'), eq(bikes.sellerId, userId)))
+      : eq(bikes.status, 'approved');
+
     const recommendedBikes = await db.query.bikes.findMany({
-      where: 
-        eq(bikes.status, 'approved'),
+      where: statusFilter,
       with: {
         seller: {
           columns: {

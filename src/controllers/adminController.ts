@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { db } from '../db';
 import { bikes, users, transactions, reports, categories, reportReasons, inspections, messages } from '../db/schema';
-import { desc, eq, and, or } from 'drizzle-orm';
+import { desc, eq, and, or, isNotNull } from 'drizzle-orm';
 import { UserPublic, ApiResponse } from '../models';
 
 // ============= QUẢN LÝ XE ĐẠP =============
@@ -17,6 +17,12 @@ export const getAllBikes = async (req: Request, res: Response) => {
             name: true,
             email: true,
             phone: true,
+          }
+        },
+        category: {
+          columns: {
+            id: true,
+            name: true,
           }
         }
       },
@@ -194,6 +200,12 @@ export const getPendingApprovalBikes = async (req: Request, res: Response) => {
             name: true,
             email: true,
             phone: true,
+          },
+        },
+        category: {
+          columns: {
+            id: true,
+            name: true,
           },
         },
         inspections: {
@@ -985,6 +997,7 @@ export const closeConversation = async (req: Request, res: Response) => {
   try {
     const adminId = req.user?.userId;
     const userId = req.params.userId as string; // Buyer or seller ID
+    const { bikeId, targetRole } = req.query;
 
     if (!adminId) {
       return res.status(401).json({
@@ -993,22 +1006,71 @@ export const closeConversation = async (req: Request, res: Response) => {
       });
     }
 
-    // Find all messages in this conversation
-    const conversationMessages = await db.query.messages.findMany({
-      where: or(
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    // Build filters for the specific conversation thread
+    const filters: any[] = [
+      or(
         and(eq(messages.senderId, adminId), eq(messages.receiverId, userId)),
         and(eq(messages.senderId, userId), eq(messages.receiverId, adminId))
       ),
-    });
+    ];
 
-    if (conversationMessages.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'No conversation found with this user'
+    // Validate and apply targetRole if provided
+    const validRoles = ['buyer', 'seller', 'inspector'];
+    if (targetRole && !validRoles.includes(String(targetRole))) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid target role' 
       });
     }
 
-    // Update all messages in this conversation to closed status
+    // For buyer/seller conversations, role filtering is REQUIRED to separate conversations
+    if (targetRole && targetRole !== 'inspector') {
+      filters.push(
+        or(
+          and(eq(messages.senderId, adminId), eq(messages.receiverRole, String(targetRole))),
+          and(eq(messages.senderId, userId), eq(messages.senderRole, String(targetRole)))
+        )
+      );
+    } else if (targetRole === 'inspector') {
+      filters.push(
+        or(
+          eq(messages.receiverRole, 'inspector'),
+          eq(messages.senderRole, 'inspector')
+        )
+      );
+    }
+
+    // Apply bikeId filter if provided
+    if (bikeId) {
+      const bid = String(bikeId);
+      if (!UUID_REGEX.test(bid)) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Invalid bikeId format' 
+        });
+      }
+      filters.push(eq(messages.bikeId, bid));
+    }
+    // If no bikeId provided, don't filter by bikeId - close ALL conversations with this user
+
+    // Find messages in this specific conversation thread
+    const conversationMessages = await db.query.messages.findMany({
+      where: and(...filters),
+    });
+
+    if (conversationMessages.length === 0) {
+      let context = 'with this user';
+      if (bikeId) context = `with this user about bike ${bikeId}`;
+      if (targetRole) context += ` (role: ${targetRole})`;
+      return res.status(404).json({
+        success: false,
+        message: `No conversation found ${context}`
+      });
+    }
+
+    // Update only messages in this specific conversation thread to closed status
     await db
       .update(messages)
       .set({
@@ -1016,22 +1078,21 @@ export const closeConversation = async (req: Request, res: Response) => {
         conversationClosedAt: new Date(),
         conversationClosedBy: adminId,
       })
-      .where(
-        or(
-          and(eq(messages.senderId, adminId), eq(messages.receiverId, userId)),
-          and(eq(messages.senderId, userId), eq(messages.receiverId, adminId))
-        )
-      );
+      .where(and(...filters));
 
     const response: ApiResponse = {
       success: true,
       data: {
         userId,
+        bikeId: bikeId ? bikeId : 'all',
+        targetRole: targetRole || 'all',
         conversationStatus: 'closed',
         totalMessagesInConversation: conversationMessages.length,
         closedAt: new Date(),
       },
-      message: 'Conversation closed successfully. Messages from user are blocked until you send a new message.'
+      message: bikeId 
+        ? `Conversation thread closed successfully (bikeId: ${bikeId}, role: ${targetRole || 'all'})`
+        : `All conversation threads closed successfully. User can no longer send messages.`
     };
 
     res.status(200).json(response);
@@ -1055,8 +1116,10 @@ export const closeConversation = async (req: Request, res: Response) => {
 export const sendMessageToUser = async (req: Request, res: Response) => {
   try {
     const adminId = req.user?.userId;
-    const userId = req.params.userId as string;
     const { content, bikeId } = req.body;
+    const userIdFromParams = req.params.userId as string;
+    const userIdFromBody = req.body.userId as string;
+    const userId = userIdFromParams || userIdFromBody;
     const fileUrl = (req as any).fileUrl || null; // From messageUpload middleware
 
     if (!adminId) {
@@ -1068,13 +1131,6 @@ export const sendMessageToUser = async (req: Request, res: Response) => {
 
     const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-    if (!UUID_REGEX.test(userId)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Invalid user ID format' 
-      });
-    }
-
     if (!content || content.trim() === '') {
       return res.status(400).json({ 
         success: false, 
@@ -1082,52 +1138,129 @@ export const sendMessageToUser = async (req: Request, res: Response) => {
       });
     }
 
-    if (userId === adminId) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Cannot send message to yourself' 
+    // At least one of userId or bikeId must be provided
+    if (!userId && !bikeId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Either userId or bikeId must be provided'
       });
     }
 
-    // Verify receiver exists
-    const [receiverRow] = await db
-      .select({ id: users.id, name: users.name, role: users.role })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
-
-    if (!receiverRow) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
-    }
-
-    // Validate bikeId if provided
+    let resolvedUserId: string;
+    let receiverRole: string;
     let resolvedBikeId: string | null = null;
-    if (bikeId !== undefined && bikeId !== null && bikeId !== '') {
+
+    // Handle when both userId and bikeId are provided
+    if (userId && bikeId) {
+      const uid = String(userId);
       const bid = String(bikeId);
-      if (!UUID_REGEX.test(bid)) {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Invalid bikeId format' 
+      
+      if (!UUID_REGEX.test(uid)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid userId format'
         });
       }
 
+      if (!UUID_REGEX.test(bid)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid bikeId format'
+        });
+      }
+
+      // Verify bike exists
       const [bikeRow] = await db
-        .select({ id: bikes.id })
+        .select({ id: bikes.id, sellerId: bikes.sellerId })
         .from(bikes)
         .where(eq(bikes.id, bid))
         .limit(1);
 
       if (!bikeRow) {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Bike not found' 
+        return res.status(400).json({
+          success: false,
+          message: 'Bike not found'
         });
       }
 
+      resolvedUserId = uid;
       resolvedBikeId = bid;
+      receiverRole = 'seller';
+    } else if (bikeId) {
+      // Handle bikeId only: auto-fill userId from bike seller
+      const bid = String(bikeId);
+      if (!UUID_REGEX.test(bid)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid bikeId format'
+        });
+      }
+
+      const [bikeRow] = await db
+        .select({ id: bikes.id, sellerId: bikes.sellerId })
+        .from(bikes)
+        .where(eq(bikes.id, bid))
+        .limit(1);
+
+      if (!bikeRow) {
+        return res.status(400).json({
+          success: false,
+          message: 'Bike not found'
+        });
+      }
+
+      resolvedUserId = bikeRow.sellerId;
+      resolvedBikeId = bid;
+      receiverRole = 'seller';
+    } else {
+      // Handle userId only
+      const uid = String(userId);
+      if (!UUID_REGEX.test(uid)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid userId format'
+        });
+      }
+
+      resolvedUserId = uid;
+      resolvedBikeId = null;
+      
+      // Lookup receiver to determine their role
+      const [receiverRow] = await db
+        .select({ id: users.id, role: users.role })
+        .from(users)
+        .where(eq(users.id, resolvedUserId))
+        .limit(1);
+
+      if (!receiverRow) {
+        return res.status(400).json({
+          success: false,
+          message: 'User not found'
+        });
+      }
+
+      receiverRole = receiverRow.role === 'inspector' ? 'inspector' : 'seller';
+    }
+
+    if (resolvedUserId === adminId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot send message to yourself'
+      });
+    }
+
+    // Get receiver info for response
+    const [receiverRow] = await db
+      .select({ id: users.id, name: users.name, role: users.role })
+      .from(users)
+      .where(eq(users.id, resolvedUserId))
+      .limit(1);
+
+    if (!receiverRow) {
+      return res.status(400).json({
+        success: false,
+        message: 'Receiver not found'
+      });
     }
 
     // Create message (unrestricted - admin can freely message anyone)
@@ -1135,12 +1268,14 @@ export const sendMessageToUser = async (req: Request, res: Response) => {
       .insert(messages)
       .values({
         senderId: adminId,
-        receiverId: userId,
+        receiverId: resolvedUserId,
         bikeId: resolvedBikeId,
         content: content.trim(),
         fileUrl: fileUrl,
         isRead: false,
-        conversationStatus: 'active', // Reopen closed conversation
+        conversationStatus: 'active', // Reopen closed conversation if it was closed
+        senderRole: 'admin',
+        receiverRole: receiverRole,
       })
       .returning();
 
@@ -1192,14 +1327,36 @@ export const getConversations = async (req: Request, res: Response) => {
       orderBy: [desc(messages.createdAt)],
     });
 
-    // Group by conversation key (bikeId + partner)
+    // Group by conversation key (bikeId + partner + role) - separate conversations per role
     const conversationMap = new Map<string, any>();
     for (const msg of allMessages) {
       const partnerId = msg.senderId === adminId ? msg.receiverId : msg.senderId;
-      const key = `${msg.bikeId ?? 'general'}_${partnerId}`;
+      const partnerData = msg.senderId === adminId ? msg.receiver : msg.sender;
+      
+      // Determine conversation role for grouping
+      let partnerRole: string;
+      
+      if (partnerData?.role === 'inspector') {
+        // Inspectors always use 'inspector' role
+        partnerRole = 'inspector';
+      } else {
+        // For buyer/seller, message MUST have a role set
+        const messageRole = msg.senderId === adminId ? msg.receiverRole : msg.senderRole;
+        if (!messageRole) {
+          // Skip messages with null roles to prevent cross-conversation leakage
+          continue;
+        }
+        partnerRole = messageRole;
+      }
+      
+      const key = `${msg.bikeId ?? 'general'}_${partnerId}_${partnerRole}`;
       if (!conversationMap.has(key)) {
+        const partnerDataToStore = msg.senderId === adminId ? msg.receiver : msg.sender;
         conversationMap.set(key, {
-          partner: msg.senderId === adminId ? msg.receiver : msg.sender,
+          partner: {
+            ...partnerDataToStore,
+            conversationRole: partnerRole, // Show conversation role context
+          },
           bike: msg.bike,
           lastMessage: {
             id: msg.id,
@@ -1236,7 +1393,7 @@ export const getMessageHistory = async (req: Request, res: Response) => {
   try {
     const adminId = req.user?.userId;
     const { userId } = req.params;
-    const { bikeId, page = 1, limit = 30 } = req.query;
+    const { bikeId, targetRole, page = 1, limit = 30 } = req.query;
 
     if (!adminId) {
       return res.status(401).json({
@@ -1254,6 +1411,15 @@ export const getMessageHistory = async (req: Request, res: Response) => {
       });
     }
 
+    // Verify targetRole if provided
+    const validRoles = ['buyer', 'seller', 'inspector'];
+    if (targetRole && !validRoles.includes(String(targetRole))) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid target role' 
+      });
+    }
+
     const pageNum = parseInt(page as string) || 1;
     const limitNum = parseInt(limit as string) || 30;
     const offset = (pageNum - 1) * limitNum;
@@ -1264,6 +1430,36 @@ export const getMessageHistory = async (req: Request, res: Response) => {
         and(eq(messages.senderId, userId), eq(messages.receiverId, adminId))
       ),
     ];
+
+    // For buyer/seller conversations, role filtering is REQUIRED to separate conversations
+    if (targetRole && targetRole !== 'inspector') {
+      // Both directions must match the target role - exclude messages with unset roles
+      filters.push(
+        or(
+          // Admin sends to user: admin is sender, user is receiver with targetRole
+          and(eq(messages.senderId, adminId), eq(messages.receiverRole, String(targetRole))),
+          // User sends to admin: user is sender with targetRole, admin is receiver
+          and(eq(messages.senderId, userId), eq(messages.senderRole, String(targetRole)))
+        )
+      );
+    } else if (targetRole === 'inspector') {
+      // For inspectors, accept messages with inspector role in either field
+      filters.push(
+        or(
+          eq(messages.receiverRole, 'inspector'),
+          eq(messages.senderRole, 'inspector')
+        )
+      );
+    } else {
+      // If no targetRole provided but user is not inspector, require at least one role field set
+      // This prevents ambiguous messages from showing in wrong conversations
+      filters.push(
+        or(
+          and(eq(messages.senderId, adminId), isNotNull(messages.receiverRole)),
+          and(eq(messages.senderId, userId), isNotNull(messages.senderRole))
+        )
+      );
+    }
 
     if (bikeId) {
       const bid = String(bikeId);
@@ -1287,6 +1483,8 @@ export const getMessageHistory = async (req: Request, res: Response) => {
         bikeId: true,
         isRead: true,
         conversationStatus: true,
+        senderRole: true,
+        receiverRole: true,
         createdAt: true,
       },
       with: {

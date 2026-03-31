@@ -1,10 +1,12 @@
 import express from 'express';
 import {
+  getCategories,
   searchBikes,
   getBikeDetail,
   getRecommendedBikes,
   createTransaction,
   getMyTransactions,
+  getTransactionDetail,
   cancelTransaction,
   getWishlist,
   addToWishlist,
@@ -22,6 +24,20 @@ import { isAuthenticated, optionalAuth } from '../middleware/authMiddleware';
 import { messageUpload, attachFileUrl } from '../middleware/messageUploadMiddleware';
 
 const router = express.Router();
+
+/**
+ * @swagger
+ * /api/buyer/v1/categories:
+ *   get:
+ *     summary: Get all categories
+ *     description: Công khai — không cần đăng nhập. Lấy danh sách tất cả danh mục từ hệ thống.
+ *     tags: [Buyer]
+ *     security: []
+ *     responses:
+ *       200:
+ *         description: Categories fetched successfully
+ */
+router.get('/v1/categories', getCategories);
 
 /**
  * @swagger
@@ -248,6 +264,31 @@ router.post('/v1/transactions', isAuthenticated, createTransaction);
  *         description: Unauthorized
  */
 router.get('/v1/transactions', isAuthenticated, getMyTransactions);
+
+/**
+ * @swagger
+ * /api/buyer/v1/transactions/{id}:
+ *   get:
+ *     summary: Xem chi tiết một đơn đặt mua
+ *     tags: [Buyer]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: Chi tiết đơn đặt mua
+ *       404:
+ *         description: Không tìm thấy giao dịch
+ *       401:
+ *         description: Unauthorized
+ */
+router.get('/v1/transactions/:id', isAuthenticated, getTransactionDetail);
 
 /**
  * @swagger

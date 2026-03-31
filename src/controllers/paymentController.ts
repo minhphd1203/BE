@@ -339,6 +339,12 @@ export const createRemainingPaymentUrl = async (req: Request, res: Response) => 
  */
 export const vnpayReturn = async (req: Request, res: Response) => {
   try {
+    // Add ngrok bypass header for browser warning page
+    res.setHeader('ngrok-skip-browser-warning', 'true');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    
     const params = req.query as Record<string, string>;
     const isValid = verifyVNPaySignature(params);
     const responseCode = params['vnp_ResponseCode'];
@@ -412,6 +418,12 @@ export const vnpayReturn = async (req: Request, res: Response) => {
  */
 export const vnpayIPN = async (req: Request, res: Response) => {
   try {
+    // Add ngrok bypass header for browser warning page
+    res.setHeader('ngrok-skip-browser-warning', 'true');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    
     const params = req.query as Record<string, string>;
 
     console.log('[VNPay IPN] Received IPN callback');

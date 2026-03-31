@@ -77,8 +77,11 @@ export const getDashboard = async (req: Request, res: Response) => {
   try {
     const inspectorId = req.user?.userId;
 
-    /** Xe vào hàng chờ inspector: tin seller pending (BEFORE admin approval) */
-    const queueStatus = eq(bikes.status, 'pending');
+    /** Xe vào hàng chờ inspector: tin seller pending HOẶC rejected bikes being resubmitted (BEFORE admin approval) */
+    const queueStatus = or(
+      eq(bikes.status, 'pending'),  // New bikes
+      eq(bikes.status, 'rejected')  // Resubmitted bikes
+    );
 
     // Đếm số xe chờ kiểm định (pending)
     const [pendingCount] = await db
@@ -172,9 +175,14 @@ export const getPendingBikes = async (req: Request, res: Response) => {
       .leftJoin(categories, eq(bikes.categoryId, categories.id))
       .$dynamic();
 
-    // Inspector inspects BEFORE admin approval: only pending bikes (NOT admin-approved yet)
+    // Inspector inspects BEFORE admin approval: both pending and rejected (resubmitted) bikes
+    // - 'pending' status: new bikes awaiting first inspection
+    // - 'rejected' status with 'pending' inspectionStatus: resubmitted bikes (seller edited after rejection)
     const conditions = [
-      eq(bikes.status, 'pending'), // Get bikes awaiting inspection (NOT yet admin-approved)
+      or(
+        eq(bikes.status, 'pending'),    // New bikes awaiting inspection
+        eq(bikes.status, 'rejected')    // Resubmitted bikes (seller edited after rejection)
+      ),
       sql`${bikes.inspectionStatus} IN ('pending', 'in_progress')`
     ];
 
@@ -377,14 +385,30 @@ export const submitInspection = async (req: Request, res: Response) => {
       : { ...req.body, bikeId: (req.body as InspectionFormData).bikeId || bikeId };
 
     // Validate required fields
-    if (!inspectionData.status || !inspectionData.overallCondition) {
+    if (!inspectionData.overallCondition) {
       return res.status(400).json({
         success: false,
-        message: 'Status and overall condition are required',
+        message: 'Overall condition is required (determines pass/fail result)',
       });
     }
     
-    // inspectionImages can be empty - no validation required
+    // Status is auto-derived from overallCondition
+    // Inspector doesn't choose status - it's determined automatically
+    const derivedStatus = ['excellent', 'good', 'fair'].includes(inspectionData.overallCondition) ? 'passed' : 'failed';
+    
+    // VALIDATION: Poor condition cannot be passed
+    if (inspectionData.overallCondition === 'poor' && inspectionData.status === 'passed') {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot pass inspection with "poor" overall condition. Overall condition must be "fair" or above (fair, good, excellent) to pass.',
+      });
+    }
+    
+    // For fair/good/excellent: use inspector's choice if provided, otherwise default to passed
+    let finalStatus: 'passed' | 'failed' = derivedStatus;
+    if (inspectionData.status && ['passed', 'failed'].includes(inspectionData.status)) {
+      finalStatus = inspectionData.status as 'passed' | 'failed';
+    }
 
     // Kiểm tra xe tồn tại
     const [bike] = await db.select().from(bikes).where(eq(bikes.id, bikeId as string));
@@ -422,55 +446,9 @@ export const submitInspection = async (req: Request, res: Response) => {
       .orderBy(desc(inspections.createdAt))
       .limit(1);
 
-    // On resubmit: LOCK condition fields - inspector cannot change them
-    // These fields represent actual bike reality, which doesn't change
-    if (previousInspection) {
-      // Resubmission detected - validate that condition fields are NOT being changed
-      if (inspectionData.frameCondition !== undefined && inspectionData.frameCondition !== previousInspection.frameCondition) {
-        return res.status(400).json({
-          success: false,
-          message: `frameCondition is locked on resubmit. Cannot change from "${previousInspection.frameCondition}" to "${inspectionData.frameCondition}". Only status can change.`,
-        });
-      }
-      if (inspectionData.brakeCondition !== undefined && inspectionData.brakeCondition !== previousInspection.brakeCondition) {
-        return res.status(400).json({
-          success: false,
-          message: `brakeCondition is locked on resubmit. Cannot change from "${previousInspection.brakeCondition}" to "${inspectionData.brakeCondition}". Only status can change.`,
-        });
-      }
-      if (inspectionData.drivetrainCondition !== undefined && inspectionData.drivetrainCondition !== previousInspection.drivetrainCondition) {
-        return res.status(400).json({
-          success: false,
-          message: `drivetrainCondition is locked on resubmit. Cannot change from "${previousInspection.drivetrainCondition}" to "${inspectionData.drivetrainCondition}". Only status can change.`,
-        });
-      }
-      if (inspectionData.wheelCondition !== undefined && inspectionData.wheelCondition !== previousInspection.wheelCondition) {
-        return res.status(400).json({
-          success: false,
-          message: `wheelCondition is locked on resubmit. Cannot change from "${previousInspection.wheelCondition}" to "${inspectionData.wheelCondition}". Only status can change.`,
-        });
-      }
-      if (inspectionData.overallCondition !== undefined && inspectionData.overallCondition !== previousInspection.overallCondition) {
-        return res.status(400).json({
-          success: false,
-          message: `overallCondition is locked on resubmit. Cannot change from "${previousInspection.overallCondition}" to "${inspectionData.overallCondition}". Only status can change.`,
-        });
-      }
-    }
-
-    // PRIORITY 2: Check constraint (only after bike status is validated)
-    // CONSTRAINT: If status is 'passed', overall condition must be 'fair' or above (not 'poor')
-    if (inspectionData.status === 'passed') {
-      const acceptableConditions = ['excellent', 'good', 'fair'];
-      if (!acceptableConditions.includes(inspectionData.overallCondition)) {
-        return res.status(400).json({
-          success: false,
-          message: `Cannot mark inspection as PASSED with overall condition "${inspectionData.overallCondition}". To pass, overall condition must be "fair", "good" or "excellent". Only bikes with "poor" condition must be marked as FAILED.`,
-          acceptableConditionsForPass: acceptableConditions,
-          receivedCondition: inspectionData.overallCondition,
-        });
-      }
-    }
+    // On resubmit: Inspector CAN freely update ALL condition fields based on current bike state
+    // This allows inspector to re-assess if seller made repairs or if condition changed
+    // Previously locked condition fields are now allowed to change
 
     // Ảnh minh chứng: upload file (field inspectionImages) + URL trong body/JSON → lưu vào inspectionImages (schema)
     // On resubmission: Allow explicit empty array to clear images (don't fallback to previous)
@@ -501,7 +479,7 @@ export const submitInspection = async (req: Request, res: Response) => {
       .values({
         bikeId: bikeId as string,
         inspectorId: inspectorId!,
-        status: inspectionData.status,
+        status: finalStatus,
         overallCondition: finalInspectionData.overallCondition,
         frameCondition: finalInspectionData.frameCondition,
         brakeCondition: finalInspectionData.brakeCondition,
@@ -514,12 +492,12 @@ export const submitInspection = async (req: Request, res: Response) => {
       })
       .returning();
 
-    // Determine verification status and bike status based on inspection result
-    const isVerifiedStatus = inspectionData.status === 'passed' ? 'verified' : 'failed';
+    // Determine verification status and bike status based on final status
+    const isVerifiedStatus = finalStatus === 'passed' ? 'verified' : 'failed';
     
     // If FAILED: auto-set bike status to rejected (no admin approval needed)
     // If PASSED: keep status as pending (waiting for admin approval)
-    const bikeStatus = inspectionData.status === 'failed' ? 'rejected' : 'pending';
+    const bikeStatus = finalStatus === 'failed' ? 'rejected' : 'pending';
 
     // Update bike with verification result and status
     await db
@@ -532,13 +510,13 @@ export const submitInspection = async (req: Request, res: Response) => {
       })
       .where(eq(bikes.id, bikeId as string));
 
-    const message = inspectionData.status === 'passed'
+    const message = finalStatus === 'passed'
       ? previousInspection 
-        ? 'Resubmission inspection passed! Info now matches actual bike condition. Bike awaiting admin approval.'
-        : 'Inspection passed! Bike awaiting admin approval to go public.'
+        ? `Resubmission inspection passed! Overall condition improved to "${finalInspectionData.overallCondition}". Bike awaiting admin approval.`
+        : `Inspection passed! Overall condition: ${finalInspectionData.overallCondition}. Bike awaiting admin approval to go public.`
       : previousInspection
-        ? 'Resubmission inspection failed. Bike condition still not acceptable. Seller must fix more and resubmit.'
-        : 'Inspection failed. Bike automatically rejected. Seller must fix and resubmit.';
+        ? `Resubmission inspection failed. Overall condition still "${finalInspectionData.overallCondition}". Seller must fix and resubmit.`
+        : `Inspection failed. Overall condition: ${finalInspectionData.overallCondition}. Bike automatically rejected. Seller must fix and resubmit.`;
 
     res.json({
       success: true,
@@ -756,23 +734,31 @@ export const updateInspection = async (req: Request, res: Response) => {
 
     // Cập nhật (chỉ field hợp lệ của bảng inspections)
     const { bikeId: _b, ...rest } = updateData as Partial<InspectionFormData> & { bikeId?: string };
+    
+    // If overallCondition is being updated, derive status from it
+    let finalUpdateData = { ...rest };
+    if (updateData.overallCondition !== undefined) {
+      // Auto-derive status from overallCondition
+      finalUpdateData.status = ['excellent', 'good', 'fair'].includes(updateData.overallCondition) ? 'passed' : 'failed';
+    }
+    
     const [updatedInspection] = await db
       .update(inspections)
       .set({
-        ...rest,
+        ...finalUpdateData,
         updatedAt: new Date(),
       })
       .where(eq(inspections.id, inspectionId as string))
       .returning();
 
-    // If inspection status is being changed, update bike status accordingly
-    if (updateData.status) {
-      const newBikeStatus = updateData.status === 'failed' ? 'rejected' : 'pending';
+    // If status is being changed (derived from overallCondition), update bike status accordingly
+    if (finalUpdateData.status) {
+      const newBikeStatus = finalUpdateData.status === 'failed' ? 'rejected' : 'pending';
       await db
         .update(bikes)
         .set({
           status: newBikeStatus,
-          isVerified: updateData.status === 'passed' ? 'verified' : 'failed',
+          isVerified: finalUpdateData.status === 'passed' ? 'verified' : 'failed',
           updatedAt: new Date(),
         })
         .where(eq(bikes.id, inspection.bikeId));
@@ -781,7 +767,7 @@ export const updateInspection = async (req: Request, res: Response) => {
     res.json({
       success: true,
       data: updatedInspection,
-      message: 'Inspection updated successfully' + (updateData.status ? ` and bike status updated to ${updateData.status === 'failed' ? 'rejected' : 'pending'}` : ''),
+      message: 'Inspection updated successfully' + (finalUpdateData.status ? ` and bike status updated to ${finalUpdateData.status === 'failed' ? 'rejected' : 'pending'} based on overall condition` : ''),
     });
   } catch (error) {
     console.error('Update inspection error:', error);

@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { db } from '../db';
-import { bikes, transactions, messages, reviews, categories, users } from '../db/schema';
+import { bikes, transactions, messages, reviews, categories, users, inspections, wishlists, reports } from '../db/schema';
 import { desc, eq, and, or, like, asc, sql } from 'drizzle-orm';
 import type { BikeListingFiles } from '../middleware/bikeUploadMiddleware';
 import {
@@ -657,16 +657,16 @@ export const toggleBikeVisibility = async (req: Request, res: Response) => {
 
 /**
  * DELETE /api/seller/v1/bikes/:id
- * Xóa tin đăng. Không thể xóa nếu có giao dịch đang pending.
+ * Xóa tin đăng. Không thể xóa nếu xe đã có giao dịch hoặc đã bán.
  */
 /**
  * DELETE /api/seller/v1/bikes/:id
  * Seller deletes their bike listing
- * SAFEGUARDS: Only allows deletion of pending or rejected bikes
- * - Cannot delete approved/public bikes (buyers might have interest)
- * - Cannot delete sold bikes
- * - Cannot delete reserved bikes
- * - Cannot delete bikes with active pending transactions
+ * 
+ * SAFEGUARDS: Prevents deletion of bikes with active transactions
+ * - CAN delete: pending, rejected, approved, hidden (if no purchases/deposits)
+ * - CANNOT delete: reserved (has deposit), sold (completed purchase)
+ * - CANNOT delete bikes with active pending transactions
  */
 export const deleteBike = async (req: Request, res: Response) => {
   try {
@@ -685,11 +685,13 @@ export const deleteBike = async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Không tìm thấy tin đăng hoặc bạn không sở hữu tin này' });
     }
 
-    // RESTRICTION: Only allow deletion of pending and rejected bikes
-    if (!['pending', 'rejected'].includes(existingBike.status)) {
+    // RESTRICTION: Only prevent deletion of reserved and sold bikes
+    // Seller can delete: pending, rejected, approved, hidden
+    // Seller CANNOT delete: reserved (someone made deposit), sold (sold)
+    if (['reserved', 'sold'].includes(existingBike.status)) {
       return res.status(400).json({
         success: false,
-        message: `Không thể xóa tin đăng ở trạng thái '${existingBike.status}'. Chỉ có thể xóa những tin ở trạng thái 'pending' hoặc 'rejected'.`,
+        message: `Không thể xóa tin đăng ở trạng thái '${existingBike.status}'. Xe đã có giao dịch hoặc đã bán rồi.`,
       });
     }
 
@@ -706,6 +708,23 @@ export const deleteBike = async (req: Request, res: Response) => {
       });
     }
 
+    // Delete all related records first (cascade delete)
+    // Delete transactions
+    await db.delete(transactions).where(eq(transactions.bikeId, id));
+    
+    // Delete inspections
+    await db.delete(inspections).where(eq(inspections.bikeId, id));
+    
+    // Delete wishlist entries
+    await db.delete(wishlists).where(eq(wishlists.bikeId, id));
+    
+    // Delete messages
+    await db.delete(messages).where(eq(messages.bikeId, id));
+    
+    // Delete reports
+    await db.delete(reports).where(eq(reports.reportedBikeId, id));
+
+    // Finally delete the bike
     await db.delete(bikes).where(and(eq(bikes.id, id), eq(bikes.sellerId, sellerId)));
 
     res.status(200).json({ success: true, message: 'Tin đăng đã được xóa thành công' });
@@ -1050,6 +1069,7 @@ export const getConversations = async (req: Request, res: Response) => {
 /**
  * GET /api/seller/v1/messages/:partnerId
  * Lấy lịch sử tin nhắn với một người dùng cụ thể (theo bikeId nếu có).
+ * Admin messages are always included regardless of bikeId filter.
  */
 export const getMessageHistory = async (req: Request, res: Response) => {
   try {
@@ -1065,13 +1085,15 @@ export const getMessageHistory = async (req: Request, res: Response) => {
     const limitNum = parseInt(limit as string) || 30;
     const offset = (pageNum - 1) * limitNum;
 
-    const filters: any[] = [
-      or(
-        and(eq(messages.senderId, sellerId), eq(messages.receiverId, partnerId)),
-        and(eq(messages.senderId, partnerId), eq(messages.receiverId, sellerId))
-      ),
-    ];
+    // Base filter: messages between seller and partner
+    const baseFilter = or(
+      and(eq(messages.senderId, sellerId), eq(messages.receiverId, partnerId)),
+      and(eq(messages.senderId, partnerId), eq(messages.receiverId, sellerId))
+    );
 
+    let finalFilter: any;
+
+    // If bikeId provided, add it to filter (but allow admin messages without bikeId)
     if (bikeId) {
       const bid = String(bikeId);
       if (!UUID_REGEX.test(bid)) {
@@ -1088,11 +1110,21 @@ export const getMessageHistory = async (req: Request, res: Response) => {
           message: 'Không được xem lịch sử tin nhắn theo xe không thuộc bạn',
         });
       }
-      filters.push(eq(messages.bikeId, bid));
+      
+      // Include messages that either match bikeId OR are from admin (senderRole = 'admin')
+      finalFilter = and(
+        baseFilter,
+        or(
+          eq(messages.bikeId, bid),
+          eq(messages.senderRole, 'admin')
+        )
+      );
+    } else {
+      finalFilter = baseFilter;
     }
 
     const history = await db.query.messages.findMany({
-      where: and(...filters),
+      where: finalFilter,
       columns: {
         id: true,
         senderId: true,
@@ -1182,7 +1214,7 @@ export const sendMessage = async (req: Request, res: Response) => {
       if (existingConversation.conversationStatus === 'closed') {
         return res.status(403).json({
           success: false,
-          message: 'This conversation has been closed. You cannot send messages.'
+          message: 'Conversation closed'
         });
       }
     } else {
@@ -1199,7 +1231,7 @@ export const sendMessage = async (req: Request, res: Response) => {
       if (latestMessage?.conversationStatus === 'closed') {
         return res.status(403).json({
           success: false,
-          message: 'This conversation has been closed. You cannot send messages.'
+          message: 'Conversation closed'
         });
       }
     }
