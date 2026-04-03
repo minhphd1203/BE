@@ -979,11 +979,29 @@ export const updateTransactionStatus = async (req: Request, res: Response) => {
       .where(and(eq(transactions.id, id), eq(transactions.sellerId, sellerId)))
       .returning();
 
+    // Update bike status based on transaction status change
+    let bikeStatus: string | undefined;
+    if (status === 'approved') {
+      // When seller approves transaction, hide bike from other buyers
+      bikeStatus = 'hidden';
+    } else if (status === 'cancelled') {
+      // When transaction is cancelled, unhide bike back to approved
+      bikeStatus = 'approved';
+    }
+
+    if (bikeStatus && existingTransaction) {
+      await db
+        .update(bikes)
+        .set({ status: bikeStatus, updatedAt: new Date() })
+        .where(eq(bikes.id, existingTransaction.bikeId))
+        .returning();
+    }
+
     let message = '';
     if (status === 'approved') {
-      message = 'Giao dịch đã được phê duyệt. Buyer có thể tiến hành thanh toán.';
+      message = 'Giao dịch đã được phê duyệt. Bike ẩn khỏi danh sách công khai. Buyer có thể tiến hành thanh toán.';
     } else {
-      message = 'Giao dịch đã bị hủy';
+      message = 'Giao dịch đã bị hủy. Bike quay trở lại trạng thái công khai.';
     }
 
     res.status(200).json({
