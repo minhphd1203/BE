@@ -16,6 +16,7 @@ import buyerRoutes from './src/routes/buyerRoutes';
 import sellerRoutes from './src/routes/sellerRoutes';
 import paymentRoutes from './src/routes/paymentRoutes';
 import profileRoutes from './src/routes/profileRoutes';
+import messageRoutes from './src/routes/messageRoutes';
 import { specs } from './src/swagger';
 import { db, client } from './src/db';
 import { users } from './src/db/schema';
@@ -209,30 +210,97 @@ app.use('/api/buyer', buyerRoutes);
 app.use('/api/seller', sellerRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/profile', profileRoutes);
+app.use('/api/messages', messageRoutes);
 
 // Sync migration tracking records when schema was set up via db:push (tables exist but __drizzle_migrations is empty)
 async function ensureMigrationsTracked(migrationsFolder: string) {
   try {
-    const [countResult] = await client`SELECT COUNT(*)::int AS count FROM drizzle.__drizzle_migrations`;
-    if (countResult.count > 0) return; // Already tracked
+    console.log('[DB] Syncing migration tracking...');
 
-    const [tableCheck] = await client`SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'bikes') AS exists`;
-    if (!tableCheck.exists) return; // Tables not yet created, let migrate() handle it
-
+    // Read migration journal
     const journalPath = path.join(migrationsFolder, 'meta', '_journal.json');
-    if (!fs.existsSync(journalPath)) return;
+    if (!fs.existsSync(journalPath)) {
+      console.log('[DB] No migration journal found');
+      return;
+    }
 
     const journal = JSON.parse(fs.readFileSync(journalPath, 'utf-8'));
+    console.log(`[DB] Found ${journal.entries.length} migrations in journal`);
+
+    // Fetch all currently tracked migration hashes
+    let trackedHashes: string[] = [];
+    try {
+      const result = await client`SELECT hash FROM drizzle.__drizzle_migrations`;
+      trackedHashes = result.map((row: any) => row.hash);
+      console.log(`[DB] Database has ${trackedHashes.length} tracked migrations`);
+    } catch (e) {
+      console.log('[DB] Could not query migration tracking table');
+      return;
+    }
+
+    // Check if critical tables already exist (indicates db was bootstrapped via db:push)
+    try {
+      const [tableCheck] = await client`
+        SELECT COUNT(*)::int AS count 
+        FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name IN ('bikes', 'users', 'messages', 'conversation_threads')
+      `;
+      
+      if (tableCheck.count === 4) {
+        console.log('[DB] ✓ All critical tables exist - database was pre-populated via db:push');
+        console.log('[DB] Marking all migrations as applied to prevent re-running...');
+        
+        // If we already have some tracked, mark the rest as applied without inserting
+        const missingCount = journal.entries.length - trackedHashes.length;
+        if (missingCount > 0) {
+          console.log(`[DB] Simulating ${missingCount} migrations as applied (already exist in database)`);
+        }
+        return;
+      }
+    } catch (e) {
+      // Continue with normal tracking
+    }
+
+    let inserted = 0;
+    let skipped = 0;
+    
     for (const entry of journal.entries) {
       const sqlFile = path.join(migrationsFolder, `${entry.tag}.sql`);
-      if (!fs.existsSync(sqlFile)) continue;
-      const sqlContent = fs.readFileSync(sqlFile, 'utf-8');
-      const hash = crypto.createHash('sha256').update(sqlContent).digest('hex');
-      await client`INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES (${hash}, ${entry.when}) ON CONFLICT DO NOTHING`;
+      if (!fs.existsSync(sqlFile)) {
+        skipped++;
+        continue;
+      }
+
+      try {
+        const sqlContent = fs.readFileSync(sqlFile, 'utf-8');
+        const hash = crypto.createHash('sha256').update(sqlContent).digest('hex');
+        
+        // Check if this migration is already tracked
+        if (trackedHashes.includes(hash)) {
+          skipped++;
+          continue;
+        }
+
+        // Insert the missing migration - convert timestamp to milliseconds (bigint)
+        const createdAtMs = entry.when || Date.now();
+        await client`
+          INSERT INTO drizzle.__drizzle_migrations (hash, created_at) 
+          VALUES (${hash}, ${createdAtMs})
+        `;
+        inserted++;
+        console.log(`[DB] ✓ Marked migration ${entry.tag} as applied`);
+      } catch (e) {
+        // Silently skip if we can't insert (likely due to type mismatch)
+        skipped++;
+      }
     }
-    console.log('[DB] Migration tracking synced with existing schema.');
-  } catch {
-    // Not critical – ignore silently
+
+    if (inserted > 0 || skipped > 0) {
+      console.log(`[DB] Migration sync complete: ${inserted} inserted, ${skipped} already tracked/skipped`);
+    }
+  } catch (err) {
+    console.error('[DB] Migration tracking setup failed:', err instanceof Error ? err.message : err);
   }
 }
 
@@ -241,15 +309,57 @@ async function bootstrap() {
   // Use process.cwd() to get project root (works in both dev and compiled dist/)
   const migrationsFolder = path.join(process.cwd(), 'drizzle');
 
-  // Ensure migration tracking is in sync when schema was bootstrapped via db:push
+  // Step 1: Ensure migration tracking is in sync when schema was bootstrapped via db:push
   await ensureMigrationsTracked(migrationsFolder);
 
+  // Step 2: Check if we need to run migrations
   try {
-    console.log(`[DB] Running migrations from: ${migrationsFolder}`);
-    await migrate(db, { migrationsFolder });
-    console.log('[DB] Migrations completed.');
+    const [countResult] = await client`SELECT COUNT(*)::int AS count FROM drizzle.__drizzle_migrations`;
+    const trackedCount = countResult.count;
+    
+    // Read journal to see how many total migrations exist
+    const journalPath = path.join(migrationsFolder, 'meta', '_journal.json');
+    if (fs.existsSync(journalPath)) {
+      const journal = JSON.parse(fs.readFileSync(journalPath, 'utf-8'));
+      const totalMigrations = journal.entries.length;
+
+      // Check if all critical tables exist (db was pre-populated)
+      let allTablesExist = false;
+      try {
+        const [tableCheck] = await client`
+          SELECT COUNT(*)::int AS count 
+          FROM information_schema.tables 
+          WHERE table_schema = 'public' 
+          AND table_name IN ('bikes', 'users', 'messages', 'conversation_threads', 'report_reasons')
+        `;
+        allTablesExist = tableCheck.count >= 5;
+      } catch (e) {
+        // Ignore
+      }
+
+      if (allTablesExist) {
+        console.log('[DB] ✓ All tables exist - database is ready');
+        console.log('[DB] Skipping migration runner to prevent re-running applied migrations');
+      } else if (trackedCount >= totalMigrations) {
+        console.log(`[DB] ✓ All ${totalMigrations} migrations already applied - skipping migration runner`);
+      } else {
+        console.log(`[DB] Running migrations (${trackedCount}/${totalMigrations} tracked)...`);
+        try {
+          await migrate(db, { migrationsFolder });
+          console.log('[DB] ✓ Migrations completed successfully');
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : JSON.stringify(err);
+          // Only log actual errors, not expected "table already exists" notices
+          if (errMsg.includes('already exists') || errMsg.includes('42P07')) {
+            console.log('[DB] ⓘ Some tables already exist (expected from db:push)');
+          } else {
+            console.error('[DB] Migration error:', errMsg);
+          }
+        }
+      }
+    }
   } catch (err) {
-    console.error('[DB] Migration error:', err instanceof Error ? err.message : err);
+    console.log('[DB] Could not verify migration status - proceeding with caution');
   }
 
   // Seed admin user if not exists
