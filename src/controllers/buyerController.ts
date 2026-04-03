@@ -423,17 +423,37 @@ export const createTransaction = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'Không thể đặt mua xe của chính mình' });
     }
 
-    // Kiểm tra buyer đã có giao dịch pending cho xe này chưa
+    // Kiểm tra buyer đã có giao dịch pending/approved cho xe này chưa
+    // Ngăn chặn nhiều transaction cùng lúc cho 1 bike
     const existingTransaction = await db.query.transactions.findFirst({
       where: and(
         eq(transactions.bikeId, bikeId),
         eq(transactions.buyerId, buyerId),
-        eq(transactions.status, 'pending')
+        inArray(transactions.status, ['pending', 'approved'])
       ),
     });
 
     if (existingTransaction) {
-      return res.status(400).json({ success: false, message: 'Bạn đã có đơn đặt mua đang chờ xử lý cho xe này' });
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Bạn đã có đơn đặt mua đang chờ xử lý cho xe này. Vui lòng hoàn tất hoặc hủy đơn trước.' 
+      });
+    }
+
+    // Kiểm tra xe có transaction pending/approved từ buyer khác không (bike đã hidden)
+    const otherBuyerTransaction = await db.query.transactions.findFirst({
+      where: and(
+        eq(transactions.bikeId, bikeId),
+        ne(transactions.buyerId, buyerId),
+        inArray(transactions.status, ['pending', 'approved'])
+      ),
+    });
+
+    if (otherBuyerTransaction) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Xe này đã được buyer khác đặt hàng. Vui lòng chọn xe khác.' 
+      });
     }
 
     // Determine transaction amount and remaining balance

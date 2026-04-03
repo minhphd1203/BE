@@ -91,7 +91,7 @@ export const createPaymentUrl = async (req: Request, res: Response) => {
     if (transaction.status !== 'approved') {
       return res.status(400).json({
         success: false,
-        message: `Giao dịch phải được seller phê duyệt trước (hiện tại: ${transaction.status}). Hãy chờ seller phê duyệt đơn hàng.`,
+        message: `Giao dịch phải được seller phê duyệt trước/ đã hoàn thành/ đã bị hủy (hiện tại: ${transaction.status}).`,
       });
     }
 
@@ -484,6 +484,12 @@ export const vnpayIPN = async (req: Request, res: Response) => {
     if (transaction.status === 'completed') {
       console.log('[VNPay IPN] ⚠️  Transaction already completed');
       return res.json({ RspCode: '02', Message: 'Order already confirmed' });
+    }
+
+    // Reject if transaction was cancelled (auto-expire or manual cancellation)
+    if (transaction.status === 'cancelled') {
+      console.log('[VNPay IPN] ⚠️  Transaction was cancelled');
+      return res.json({ RspCode: '01', Message: 'Transaction was cancelled' });
     }
 
     if (responseCode !== '00') {

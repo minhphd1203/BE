@@ -20,6 +20,7 @@ import { specs } from './src/swagger';
 import { db, client } from './src/db';
 import { users } from './src/db/schema';
 import { eq } from 'drizzle-orm';
+import { startAutoExpireJob } from './src/jobs/autoExpireTransactions';
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -275,6 +276,9 @@ async function bootstrap() {
     console.log(`\n🚀 Server is running at http://localhost:${port}`);
     console.log(`📚 Swagger UI:        http://localhost:${port}/api-docs`);
     console.log(`📄 Swagger JSON:      http://localhost:${port}/api-docs/spec.json\n`);
+
+    // Start background jobs
+    startAutoExpireJob();
   });
 
   server.on('error', (err: NodeJS.ErrnoException) => {
