@@ -16,12 +16,8 @@ import {
   getSellerBikesForReport,
   getReportReasons,
   addReview,
-  getConversations,
-  sendMessageToSeller,
-  getMessageWithSeller,
 } from '../controllers/buyerController';
 import { isAuthenticated, optionalAuth } from '../middleware/authMiddleware';
-import { messageUpload, attachFileUrl } from '../middleware/messageUploadMiddleware';
 
 const router = express.Router();
 
@@ -766,125 +762,5 @@ router.get('/v1/report-reasons', isAuthenticated, getReportReasons);
  *         description: Unauthorized
  */
 router.post('/v1/reviews', isAuthenticated, addReview);
-
-// ============= MESSAGES =============
-
-/**
- * @swagger
- * /api/buyer/v1/messages/{sellerId}:
- *   post:
- *     summary: Send message to seller, admin, or inspector
- *     description: |
- *       Send a message to a seller, admin, or inspector.
- *       
- *       **Supports file/image attachments:**
- *       - Upload single file via `attachment` form field (multipart/form-data)
- *       - Allowed formats: images (jpeg, png, webp, gif) and documents (pdf, doc, docx, txt)
- *       - Max file size: 10MB
- *       - Optional: leave empty to send text-only message
- *       
- *       **Constraints:**
- *       - **Cannot initiate** to admin/inspector (403 error if no prior conversation)
- *       - **Can reply** to messages from admin/inspector if they messaged first
- *       - **Cannot send** if conversation is closed by admin/inspector (403 error)
- *       - **Can freely** message sellers/buyers (bidirectional, any time)
- *     tags: [Buyer]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: sellerId
- *         required: true
- *         schema:
- *           type: string
- *           format: uuid
- *     requestBody:
- *       required: true
- *       content:
- *         multipart/form-data:
- *           schema:
- *             type: object
- *             required: [content]
- *             properties:
- *               content:
- *                 type: string
- *                 example: "Xe còn không anh? Em muốn hỏi thêm về tình trạng"
- *               bikeId:
- *                 type: string
- *                 format: uuid
- *                 description: ID xe liên quan (tùy chọn)
- *               attachment:
- *                 type: string
- *                 format: binary
- *                 description: Optional file attachment (image or document, max 10MB)
- *     responses:
- *       201:
- *         description: Tin nhắn đã gửi
- *       403:
- *         description: |
- *           Cannot send message:
- *           - Cannot initiate messages to admin/inspector
- *           - Conversation has been closed
- *       400:
- *         description: Nội dung trống, seller không tồn tại, hoặc loại file không hỗ trợ
- *       401:
- *         description: Unauthorized
- */
-router.post('/v1/messages/:sellerId', isAuthenticated, messageUpload, attachFileUrl, sendMessageToSeller);
-
-/**
- * @swagger
- * /api/buyer/v1/messages:
- *   get:
- *     summary: Xem danh sách cuộc hội thoại với các seller
- *     tags: [Buyer]
- *     security:
- *       - bearerAuth: []
- *     responses:
- *       200:
- *         description: Danh sách cuộc hội thoại
- *       401:
- *         description: Unauthorized
- */
-router.get('/v1/messages', isAuthenticated, getConversations);
-
-/**
- * @swagger
- * /api/buyer/v1/messages/{sellerId}:
- *   get:
- *     summary: Xem lịch sử tin nhắn với seller
- *     tags: [Buyer]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: sellerId
- *         required: true
- *         schema:
- *           type: string
- *           format: uuid
- *       - in: query
- *         name: bikeId
- *         schema:
- *           type: string
- *           format: uuid
- *         description: Lọc theo xe cụ thể (tùy chọn)
- *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *           default: 1
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           default: 30
- *     responses:
- *       200:
- *         description: Lịch sử tin nhắn
- *       401:
- *         description: Unauthorized
- */
-router.get('/v1/messages/:sellerId', isAuthenticated, getMessageWithSeller);
 
 export default router;

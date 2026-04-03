@@ -123,23 +123,35 @@ export const wishlists = pgTable('wishlists', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
-// Messages table (direct messaging between buyer and seller)
+// Conversation Threads table (tracks thread metadata)
+// Thread identified by: participant1Id + participant2Id + bikeId
+// This allows tracking thread status separately from individual messages
+export const conversationThreads = pgTable('conversation_threads', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  participant1Id: uuid('participant1_id').notNull().references(() => users.id), // First participant (can be any role)
+  participant2Id: uuid('participant2_id').notNull().references(() => users.id), // Second participant (can be any role)
+  bikeId: uuid('bike_id').references(() => bikes.id), // Context bike (optional, allows filtering threads by bike)
+  status: varchar('status', { length: 50 }).notNull().default('open'), // 'open' or 'closed'
+  closedAt: timestamp('closed_at'), // When thread was closed
+  closedBy: uuid('closed_by').references(() => users.id), // Who closed it (admin/inspector)
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
+});
+
+// Messages table (direct messaging between users with role-based constraints enforced in controller)
+// Thread identified by: senderId + receiverId + bikeId (conversation_threads table handles thread metadata)
 export const messages = pgTable('messages', {
   id: uuid('id').primaryKey().defaultRandom(),
+  threadId: uuid('thread_id').notNull().references(() => conversationThreads.id, { onDelete: 'cascade' }),
   senderId: uuid('sender_id').notNull().references(() => users.id),
   receiverId: uuid('receiver_id').notNull().references(() => users.id),
-  bikeId: uuid('bike_id').references(() => bikes.id), // context bike (optional)
-  senderRole: varchar('sender_role', { length: 50 }).notNull().default('buyer'), // 'buyer' or 'seller' - role of sender when message was sent
-  receiverRole: varchar('receiver_role', { length: 50 }).notNull().default('seller'), // 'buyer' or 'seller' - role of receiver when message was sent
+  bikeId: uuid('bike_id').references(() => bikes.id), // context bike (optional, denormalized from thread for query convenience)
   content: text('content').notNull(),
   isRead: boolean('is_read').notNull().default(false),
   // File attachment (image/document URL - optional)
   fileUrl: text('file_url'), // nullable, stores uploaded file URL
-  // Conversation status: allows admin/inspector to close conversations with buyers/sellers
-  conversationStatus: varchar('conversation_status', { length: 50 }).notNull().default('active'), // 'active' or 'closed'
-  conversationClosedAt: timestamp('conversation_closed_at'), // When conversation was closed
-  conversationClosedBy: uuid('conversation_closed_by').references(() => users.id), // Who closed it (admin/inspector)
   createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
 });
 
 // Reviews table (buyer reviews seller after transaction)
@@ -167,6 +179,8 @@ export const usersRelations = relations(users, ({ many }) => ({
   receivedMessages: many(messages, { relationName: 'receiver' }),
   givenReviews: many(reviews, { relationName: 'reviewer' }),
   receivedReviews: many(reviews, { relationName: 'reviewedSeller' }),
+  conversationThreadsAsParticipant1: many(conversationThreads, { relationName: 'participant1' }),
+  conversationThreadsAsParticipant2: many(conversationThreads, { relationName: 'participant2' }),
 }));
 
 export const categoriesRelations = relations(categories, ({ many }) => ({
@@ -175,6 +189,28 @@ export const categoriesRelations = relations(categories, ({ many }) => ({
 
 export const reportReasonsRelations = relations(reportReasons, ({ many }) => ({
   reports: many(reports),
+}));
+
+export const conversationThreadsRelations = relations(conversationThreads, ({ one, many }) => ({
+  participant1: one(users, {
+    fields: [conversationThreads.participant1Id],
+    references: [users.id],
+    relationName: 'participant1',
+  }),
+  participant2: one(users, {
+    fields: [conversationThreads.participant2Id],
+    references: [users.id],
+    relationName: 'participant2',
+  }),
+  bike: one(bikes, {
+    fields: [conversationThreads.bikeId],
+    references: [bikes.id],
+  }),
+  closedByUser: one(users, {
+    fields: [conversationThreads.closedBy],
+    references: [users.id],
+  }),
+  messages: many(messages),
 }));
 
 export const bikesRelations = relations(bikes, ({ one, many }) => ({
@@ -191,6 +227,7 @@ export const bikesRelations = relations(bikes, ({ one, many }) => ({
   inspections: many(inspections),
   wishlists: many(wishlists),
   messages: many(messages),
+  conversationThreads: many(conversationThreads),
 }));
 
 export const transactionsRelations = relations(transactions, ({ one }) => ({
@@ -258,6 +295,10 @@ export const wishlistsRelations = relations(wishlists, ({ one }) => ({
 }));
 
 export const messagesRelations = relations(messages, ({ one }) => ({
+  thread: one(conversationThreads, {
+    fields: [messages.threadId],
+    references: [conversationThreads.id],
+  }),
   sender: one(users, {
     fields: [messages.senderId],
     references: [users.id],
@@ -312,6 +353,9 @@ export type NewInspection = typeof inspections.$inferInsert;
 
 export type Wishlist = typeof wishlists.$inferSelect;
 export type NewWishlist = typeof wishlists.$inferInsert;
+
+export type ConversationThread = typeof conversationThreads.$inferSelect;
+export type NewConversationThread = typeof conversationThreads.$inferInsert;
 
 export type Message = typeof messages.$inferSelect;
 export type NewMessage = typeof messages.$inferInsert;

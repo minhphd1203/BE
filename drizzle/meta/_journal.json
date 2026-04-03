@@ -36,6 +36,69 @@
       "when": 1774454195684,
       "tag": "0004_awesome_hellcat",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1774454195685,
+      "tag": "0005_add_reserved_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1774454195686,
+      "tag": "0006_add_report_reasons",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1774454195687,
+      "tag": "0007_add_conversation_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1774454195688,
+      "tag": "0008_add_file_to_messages",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1774454195689,
+      "tag": "0009_add_sender_role_to_messages",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1774454195690,
+      "tag": "0010_add_receiver_role_to_messages",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1774454195691,
+      "tag": "0011_update_users_email_role_unique",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1774454195692,
+      "tag": "0012_create_conversation_threads",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1774454195693,
+      "tag": "0013_add_thread_id_to_messages",
+      "breakpoints": true
     }
   ]
 }
