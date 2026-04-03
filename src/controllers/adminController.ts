@@ -219,6 +219,7 @@ export const getPendingApprovalBikes = async (req: Request, res: Response) => {
             wheelCondition: true,
             inspectionNote: true,
             recommendation: true,
+            reason: true,
             createdAt: true,
           },
           orderBy: [desc(bikes.createdAt)],
@@ -447,14 +448,30 @@ export const getAllTransaction = async (req: Request, res: Response) => {
   }
 };
 
+const ADMIN_TX_ADDRESS_MAX_LEN = 2000;
+
 export const updateTransaction = async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
-    const { status, notes } = req.body;
+    const { status, notes, address } = req.body;
     
     const updateData: any = { updatedAt: new Date() };
     if (status !== undefined) updateData.status = status;
     if (notes !== undefined) updateData.notes = notes;
+    if (address !== undefined) {
+      if (address === null || address === '') {
+        updateData.address = null;
+      } else {
+        const t = String(address).trim();
+        if (t.length > ADMIN_TX_ADDRESS_MAX_LEN) {
+          return res.status(400).json({
+            success: false,
+            message: `Địa chỉ không quá ${ADMIN_TX_ADDRESS_MAX_LEN} ký tự`,
+          });
+        }
+        updateData.address = t || null;
+      }
+    }
 
     const [updatedTransaction] = await db
       .update(transactions)

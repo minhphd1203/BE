@@ -7,6 +7,17 @@ import { TRANSACTION_TYPE_OPTIONS, TRANSACTION_TYPES } from '../constants/transa
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+const TRANSACTION_ADDRESS_MAX_LEN = 2000;
+
+function parseTransactionAddressInput(raw: unknown): { ok: true; value: string | null } | { ok: false; message: string } {
+  if (raw === undefined || raw === null) return { ok: true, value: null };
+  const t = String(raw).trim();
+  if (t.length > TRANSACTION_ADDRESS_MAX_LEN) {
+    return { ok: false, message: `Địa chỉ không quá ${TRANSACTION_ADDRESS_MAX_LEN} ký tự` };
+  }
+  return { ok: true, value: t || null };
+}
+
 // ============= SEARCH & BROWSE BIKES =============
 
 /**
@@ -299,6 +310,7 @@ export const getBikeDetail = async (req: Request, res: Response) => {
             wheelCondition: true,
             inspectionNote: true,
             recommendation: true,
+            reason: true,
             createdAt: true,
           },
         },
@@ -393,7 +405,12 @@ export const createTransaction = async (req: Request, res: Response) => {
       return res.status(403).json({ success: false, message: 'Sellers cannot purchase bikes' });
     }
 
-    const { bikeId, amount, transactionType = 'full_payment', paymentMethod, notes } = req.body;
+    const { bikeId, amount, transactionType = 'full_payment', paymentMethod, notes, address: addressInput } = req.body;
+
+    const parsedAddress = parseTransactionAddressInput(addressInput);
+    if (!parsedAddress.ok) {
+      return res.status(400).json({ success: false, message: parsedAddress.message });
+    }
 
     if (!bikeId) {
       return res.status(400).json({ success: false, message: 'Thiếu thông tin bắt buộc: bikeId' });
@@ -502,6 +519,7 @@ export const createTransaction = async (req: Request, res: Response) => {
         remainingBalance,
         paymentMethod: paymentMethod || null,
         notes: finalNotes || null,
+        address: parsedAddress.value,
         status: 'pending',
       })
       .returning();
@@ -606,6 +624,7 @@ export const getTransactionDetail = async (req: Request, res: Response) => {
         createdAt: true,
         updatedAt: true,
         notes: true,
+        address: true,
       },
       with: {
         bike: {

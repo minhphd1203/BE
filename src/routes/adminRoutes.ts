@@ -324,6 +324,13 @@ router.get('/v1/transaction', isAdmin, getAllTransaction);
  *               status:
  *                 type: string
  *                 enum: [pending, completed, cancelled]
+ *               notes:
+ *                 type: string
+ *                 nullable: true
+ *               address:
+ *                 type: string
+ *                 nullable: true
+ *                 description: "Ghi địa chỉ hoặc gửi null/\"\" để xóa (tối đa 2000 ký tự)"
  *     responses:
  *       200:
  *         description: Transaction updated successfully

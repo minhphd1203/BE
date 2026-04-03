@@ -263,6 +263,7 @@ export const createRemainingPaymentUrl = async (req: Request, res: Response) => 
         transactionType: 'remaining_payment',
         remainingBalance: 0,
         notes: `Thanh toán phần còn lại của đơn đặt cọc: ${transactionId}`,
+        address: depositTransaction.address ?? null,
         status: 'pending',
       })
       .returning();

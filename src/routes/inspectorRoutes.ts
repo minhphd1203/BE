@@ -140,6 +140,10 @@ router.post('/v1/bikes/:bikeId/start', isInspector, startInspection);
  *               inspectionNote: { type: string }
  *               recommendation: { type: string }
  *               reportFile: { type: string }
+ *               reason:
+ *                 type: string
+ *                 nullable: true
+ *                 description: "Khi inspection failed — lý do từ chối (optional, tối đa 10000 ký tự). Với passed bị bỏ qua."
  *               inspectionImages:
  *                 type: string
  *                 format: binary
@@ -169,6 +173,10 @@ router.post('/v1/bikes/:bikeId/start', isInspector, startInspection);
  *                 type: string
  *               recommendation:
  *                 type: string
+ *               reason:
+ *                 type: string
+ *                 nullable: true
+ *                 description: "Lý do khi failed (optional)"
  *               inspectionImages:
  *                 type: array
  *                 items:
@@ -266,6 +274,10 @@ router.get('/v1/inspections/:inspectionId', isInspector, getInspectionDetail);
  *               inspectionNote: { type: string }
  *               recommendation: { type: string }
  *               reportFile: { type: string }
+ *               reason:
+ *                 type: string
+ *                 nullable: true
+ *                 description: "Lý do từ chối khi failed; gửi null/empty để xóa. Khi chuyển passed → tự xóa."
  *               inspectionImages:
  *                 type: string
  *                 format: binary
@@ -287,6 +299,9 @@ router.get('/v1/inspections/:inspectionId', isInspector, getInspectionDetail);
  *                 type: string
  *               recommendation:
  *                 type: string
+ *               reason:
+ *                 type: string
+ *                 nullable: true
  *               inspectionImages:
  *                 type: array
  *                 items:

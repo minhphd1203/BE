@@ -44,6 +44,7 @@ function inspectionFormFromMultipart(body: Record<string, unknown>, bikeId: stri
     recommendation: pickBodyStr(body, 'recommendation'),
     reportFile: pickBodyStr(body, 'reportFile'),
     inspectionImages: parseInspectionImagesFromBody(body.inspectionImages),
+    reason: pickInspectionReasonFromBody(body),
   };
 }
 
@@ -59,6 +60,14 @@ const INSPECTION_UPDATE_KEYS = [
   'reportFile',
 ] as const;
 
+const INSPECTION_REASON_MAX_LEN = 10_000;
+
+function pickInspectionReasonFromBody(body: Record<string, unknown>): string | undefined {
+  const s = pickBodyStr(body, 'reason');
+  if (s === undefined) return undefined;
+  return s.length > INSPECTION_REASON_MAX_LEN ? s.slice(0, INSPECTION_REASON_MAX_LEN) : s;
+}
+
 function partialInspectionFromMultipart(body: Record<string, unknown>): Partial<InspectionFormData> {
   const out: Partial<InspectionFormData> = {};
   for (const key of INSPECTION_UPDATE_KEYS) {
@@ -67,6 +76,14 @@ function partialInspectionFromMultipart(body: Record<string, unknown>): Partial<
   }
   const imgs = parseInspectionImagesFromBody(body.inspectionImages);
   if (imgs !== undefined) out.inspectionImages = imgs;
+  if (Object.prototype.hasOwnProperty.call(body, 'reason')) {
+    const r = body.reason;
+    if (r === null || r === undefined || r === '') out.reason = null;
+    else {
+      const t = String(r).trim();
+      out.reason = t.length > INSPECTION_REASON_MAX_LEN ? t.slice(0, INSPECTION_REASON_MAX_LEN) : t || null;
+    }
+  }
   return out;
 }
 
@@ -473,6 +490,17 @@ export const submitInspection = async (req: Request, res: Response) => {
       reportFile: inspectionData.reportFile ?? previousInspection?.reportFile,
     };
 
+    const resolvedReason =
+      finalStatus === 'failed'
+        ? (() => {
+            const r = inspectionData.reason;
+            if (r === undefined || r === null) return null;
+            const t = String(r).trim();
+            if (!t) return null;
+            return t.length > INSPECTION_REASON_MAX_LEN ? t.slice(0, INSPECTION_REASON_MAX_LEN) : t;
+          })()
+        : null;
+
     // Tạo bản ghi inspection
     const [newInspection] = await db
       .insert(inspections)
@@ -489,6 +517,7 @@ export const submitInspection = async (req: Request, res: Response) => {
         recommendation: finalInspectionData.recommendation,
         inspectionImages: finalInspectionData.inspectionImages,
         reportFile: finalInspectionData.reportFile,
+        reason: resolvedReason,
       })
       .returning();
 
@@ -741,13 +770,35 @@ export const updateInspection = async (req: Request, res: Response) => {
       // Auto-derive status from overallCondition
       finalUpdateData.status = ['excellent', 'good', 'fair'].includes(updateData.overallCondition) ? 'passed' : 'failed';
     }
+
+    const setRow: Record<string, unknown> = {
+      updatedAt: new Date(),
+    };
+    const inspectionPatchKeys: (keyof InspectionFormData)[] = [
+      'status',
+      'overallCondition',
+      'frameCondition',
+      'brakeCondition',
+      'drivetrainCondition',
+      'wheelCondition',
+      'inspectionNote',
+      'recommendation',
+      'reportFile',
+      'inspectionImages',
+      'reason',
+    ];
+    const patch = finalUpdateData as Record<string, unknown>;
+    for (const key of inspectionPatchKeys) {
+      const v = patch[key as string];
+      if (v !== undefined) setRow[key as string] = v;
+    }
+    if (finalUpdateData.status === 'passed') {
+      setRow.reason = null;
+    }
     
     const [updatedInspection] = await db
       .update(inspections)
-      .set({
-        ...finalUpdateData,
-        updatedAt: new Date(),
-      })
+      .set(setRow as Partial<typeof inspections.$inferInsert>)
       .where(eq(inspections.id, inspectionId as string))
       .returning();
 

@@ -20,6 +20,8 @@ export interface InspectionFormData {
   recommendation?: string;
   inspectionImages?: string[];
   reportFile?: string;
+  /** Lý do từ chối khi inspection failed (optional) */
+  reason?: string | null;
 }
 
 // Dashboard statistics
