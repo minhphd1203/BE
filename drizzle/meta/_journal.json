@@ -99,6 +99,13 @@
       "when": 1774454195693,
       "tag": "0013_add_thread_id_to_messages",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1774454195700,
+      "tag": "0014_tx_address_fullname_inspection_reason",
+      "breakpoints": true
     }
   ]
 }

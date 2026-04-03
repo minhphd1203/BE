@@ -3,6 +3,7 @@ import { db } from '../db';
 import { bikes, users, transactions, reports, categories, reportReasons, inspections, messages } from '../db/schema';
 import { desc, eq, and, or, isNotNull } from 'drizzle-orm';
 import { UserPublic, ApiResponse } from '../models';
+import { mapTransactionsWithShippingAlias, withShippingAddressAlias } from '../utils/transactionResponse';
 
 // ============= QUẢN LÝ XE ĐẠP =============
 
@@ -219,6 +220,7 @@ export const getPendingApprovalBikes = async (req: Request, res: Response) => {
             wheelCondition: true,
             inspectionNote: true,
             recommendation: true,
+            reason: true,
             createdAt: true,
           },
           orderBy: [desc(bikes.createdAt)],
@@ -433,7 +435,7 @@ export const getAllTransaction = async (req: Request, res: Response) => {
     
     const response: ApiResponse = {
       success: true,
-      data: allTransactions,
+      data: mapTransactionsWithShippingAlias(allTransactions),
       message: 'Transactions fetched successfully'
     };
     
@@ -447,14 +449,48 @@ export const getAllTransaction = async (req: Request, res: Response) => {
   }
 };
 
+const ADMIN_TX_ADDRESS_MAX_LEN = 2000;
+const ADMIN_TX_FULL_NAME_MAX_LEN = 255;
+
 export const updateTransaction = async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
-    const { status, notes } = req.body;
+    const { status, notes, address, shippingAddress, fullName } = req.body;
     
     const updateData: any = { updatedAt: new Date() };
     if (status !== undefined) updateData.status = status;
     if (notes !== undefined) updateData.notes = notes;
+
+    const addrRaw = address !== undefined ? address : shippingAddress;
+    if (addrRaw !== undefined) {
+      if (addrRaw === null || addrRaw === '') {
+        updateData.address = null;
+      } else {
+        const t = String(addrRaw).trim();
+        if (t.length > ADMIN_TX_ADDRESS_MAX_LEN) {
+          return res.status(400).json({
+            success: false,
+            message: `Địa chỉ không quá ${ADMIN_TX_ADDRESS_MAX_LEN} ký tự`,
+          });
+        }
+        updateData.address = t || null;
+      }
+    }
+
+    if (fullName !== undefined) {
+      if (fullName === null || fullName === '') {
+        updateData.fullName = null;
+      } else {
+        const t = String(fullName).trim();
+        if (t.length > ADMIN_TX_FULL_NAME_MAX_LEN) {
+          return res.status(400).json({
+            success: false,
+            message: `Họ tên không quá ${ADMIN_TX_FULL_NAME_MAX_LEN} ký tự`,
+          });
+        }
+        updateData.fullName = t || null;
+      }
+    }
 
     const [updatedTransaction] = await db
       .update(transactions)
@@ -471,7 +507,7 @@ export const updateTransaction = async (req: Request, res: Response) => {
 
     const response: ApiResponse = {
       success: true,
-      data: updatedTransaction,
+      data: withShippingAddressAlias(updatedTransaction),
       message: 'Transaction updated successfully'
     };
     

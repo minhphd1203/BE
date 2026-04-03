@@ -8,6 +8,7 @@ import {
   collectVideoUrlFromRequest,
   normalizeImagesFromBody,
 } from '../middleware/bikeUploadMiddleware';
+import { mapTransactionsWithShippingAlias, withShippingAddressAlias } from '../utils/transactionResponse';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -417,13 +418,25 @@ export const getMyBikeDetail = async (req: Request, res: Response) => {
             wheelCondition: true,
             inspectionNote: true,
             recommendation: true,
+            reason: true,
             inspectionImages: true,
             reportFile: true,
             createdAt: true,
           },
         },
         transactions: {
-          columns: { id: true, amount: true, status: true, paymentMethod: true, notes: true, createdAt: true },
+          columns: {
+            id: true,
+            amount: true,
+            status: true,
+            paymentMethod: true,
+            notes: true,
+            address: true,
+            fullName: true,
+            transactionType: true,
+            remainingBalance: true,
+            createdAt: true,
+          },
           with: {
             buyer: { columns: { id: true, name: true, email: true, phone: true, avatar: true } },
           },
@@ -435,7 +448,12 @@ export const getMyBikeDetail = async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Không tìm thấy tin đăng hoặc bạn không sở hữu tin này' });
     }
 
-    res.status(200).json({ success: true, data: bike, message: 'Chi tiết tin đăng fetched successfully' });
+    const bikeOut =
+      bike.transactions && bike.transactions.length > 0
+        ? { ...bike, transactions: mapTransactionsWithShippingAlias(bike.transactions) }
+        : bike;
+
+    res.status(200).json({ success: true, data: bikeOut, message: 'Chi tiết tin đăng fetched successfully' });
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -842,7 +860,7 @@ export const getMyTransactions = async (req: Request, res: Response) => {
 
     res.status(200).json({
       success: true,
-      data: myTransactions,
+      data: mapTransactionsWithShippingAlias(myTransactions),
       message: 'Danh sách giao dịch fetched successfully',
       meta: { total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) },
     });
@@ -894,7 +912,7 @@ export const getMyTransactionById = async (req: Request, res: Response) => {
 
     res.status(200).json({
       success: true,
-      data: row,
+      data: withShippingAddressAlias(row),
       message: 'Chi tiết giao dịch fetched successfully',
     });
   } catch (error) {
@@ -1006,7 +1024,7 @@ export const updateTransactionStatus = async (req: Request, res: Response) => {
 
     res.status(200).json({
       success: true,
-      data: updatedTransaction,
+      data: withShippingAddressAlias(updatedTransaction),
       message,
     });
   } catch (error) {

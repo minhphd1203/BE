@@ -26,47 +26,36 @@ import { startAutoExpireJob } from './src/jobs/autoExpireTransactions';
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Middleware - Manual CORS to ensure preflight works
-app.use((req, res, next) => {
-  const origin = req.headers.origin || '*';
-  res.header('Access-Control-Allow-Origin', origin);
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, content-type, authorization, Accept, X-Requested-With, ngrok-skip-browser-warning');
-  res.header('Access-Control-Max-Age', '86400');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  if (req.method === 'OPTIONS') {
-    return res.status(204).end();
-  }
-  next();
-});
-app.use(cors({
-  origin: (origin, callback) => {
-    // Allow requests without origin (mobile apps, server-to-server)
-    if (!origin) return callback(null, true);
-    
-    // Allow localhost
-    if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
-      return callback(null, true);
-    }
-    
-    // Allow ngrok domains
-    if (origin.includes('ngrok')) {
-      return callback(null, true);
-    }
-    
-    // Allow configured APP_URL
-    const appUrl = process.env.APP_URL;
-    if (appUrl && origin === appUrl) {
-      return callback(null, true);
-    }
-    
-    // For development, allow all
-    callback(null, true);
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning'],
-}));
+const extraCorsOrigins = (process.env.CORS_ORIGINS ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+function isCorsOriginAllowed(origin: string | undefined): boolean {
+  if (!origin) return true;
+  if (origin.includes('localhost') || origin.includes('127.0.0.1')) return true;
+  if (origin.includes('ngrok')) return true;
+  if (extraCorsOrigins.includes(origin)) return true;
+  const appUrl = process.env.APP_URL;
+  if (appUrl && origin === appUrl) return true;
+  return process.env.NODE_ENV !== 'production';
+}
+
+// CORS: dùng package `cors` (preflight OPTIONS + phản chiếu Access-Control-Request-Headers nếu không set allowedHeaders).
+// Tránh allowedHeaders cố định — Angular/interceptor có thể gửi thêm header → preflight fail.
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      return isCorsOriginAllowed(origin)
+        ? callback(null, true)
+        : callback(null, false);
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'],
+    maxAge: 86400,
+  })
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

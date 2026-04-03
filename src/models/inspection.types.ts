@@ -20,6 +20,7 @@ export interface InspectionFormData {
   recommendation?: string;
   inspectionImages?: string[];
   reportFile?: string;
+  reason?: string | null;
 }
 
 // Dashboard statistics

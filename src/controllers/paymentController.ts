@@ -4,6 +4,7 @@ import QRCode from 'qrcode';
 import { db } from '../db';
 import { transactions, bikes } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
+import { withShippingAddressAlias } from '../utils/transactionResponse';
 
 // ============= VNPAY MANUAL IMPLEMENTATION =============
 // Implement theo đúng tài liệu chính thức VNPay để tránh encoding issues
@@ -263,6 +264,8 @@ export const createRemainingPaymentUrl = async (req: Request, res: Response) => 
         transactionType: 'remaining_payment',
         remainingBalance: 0,
         notes: `Thanh toán phần còn lại của đơn đặt cọc: ${transactionId}`,
+        address: depositTransaction.address ?? null,
+        fullName: depositTransaction.fullName ?? null,
         status: 'pending',
       })
       .returning();
@@ -609,7 +612,7 @@ export const getPaymentStatus = async (req: Request, res: Response) => {
 
     res.status(200).json({
       success: true,
-      data: transaction,
+      data: withShippingAddressAlias(transaction),
       message: 'Trạng thái thanh toán fetched successfully',
     });
   } catch (error) {

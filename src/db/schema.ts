@@ -64,6 +64,8 @@ export const transactions = pgTable('transactions', {
   status: varchar('status', { length: 50 }).notNull().default('pending'), // pending, approved, completed, cancelled
   paymentMethod: varchar('payment_method', { length: 50 }),
   notes: text('notes'),
+  address: text('address'),
+  fullName: text('full_name'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
 });
@@ -83,6 +85,7 @@ export const inspections = pgTable('inspections', {
   recommendation: text('recommendation'),
   inspectionImages: text('inspection_images').array().default([]),
   reportFile: text('report_file'),
+  reason: text('reason'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
 });
