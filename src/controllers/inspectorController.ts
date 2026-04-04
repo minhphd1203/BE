@@ -44,7 +44,32 @@ function inspectionFormFromMultipart(body: Record<string, unknown>, bikeId: stri
     recommendation: pickBodyStr(body, 'recommendation'),
     reportFile: pickBodyStr(body, 'reportFile'),
     inspectionImages: parseInspectionImagesFromBody(body.inspectionImages),
+    reason: pickInspectionReasonFromBody(body),
   };
+}
+
+const INSPECTION_REASON_MAX_LEN = 10_000;
+/** Khớp FE: khi failed, bắt buộc mô tả lý do đủ dài */
+const INSPECTION_FAILED_REASON_MIN_LEN = 20;
+
+function validateFailedInspectionReason(raw: string | null | undefined): { ok: true; value: string } | { ok: false; message: string } {
+  const t = raw == null ? '' : String(raw).trim();
+  if (t.length < INSPECTION_FAILED_REASON_MIN_LEN) {
+    return {
+      ok: false,
+      message: `Khi kiểm định failed, trường reason là bắt buộc và phải có ít nhất ${INSPECTION_FAILED_REASON_MIN_LEN} ký tự (sau khi trim).`,
+    };
+  }
+  if (t.length > INSPECTION_REASON_MAX_LEN) {
+    return { ok: true, value: t.slice(0, INSPECTION_REASON_MAX_LEN) };
+  }
+  return { ok: true, value: t };
+}
+
+function pickInspectionReasonFromBody(body: Record<string, unknown>): string | undefined {
+  const s = pickBodyStr(body, 'reason');
+  if (s === undefined) return undefined;
+  return s.length > INSPECTION_REASON_MAX_LEN ? s.slice(0, INSPECTION_REASON_MAX_LEN) : s;
 }
 
 const INSPECTION_UPDATE_KEYS = [
@@ -67,6 +92,14 @@ function partialInspectionFromMultipart(body: Record<string, unknown>): Partial<
   }
   const imgs = parseInspectionImagesFromBody(body.inspectionImages);
   if (imgs !== undefined) out.inspectionImages = imgs;
+  if (Object.prototype.hasOwnProperty.call(body, 'reason')) {
+    const r = body.reason;
+    if (r === null || r === undefined || r === '') out.reason = null;
+    else {
+      const t = String(r).trim();
+      out.reason = t.length > INSPECTION_REASON_MAX_LEN ? t.slice(0, INSPECTION_REASON_MAX_LEN) : t || null;
+    }
+  }
   return out;
 }
 
@@ -473,6 +506,16 @@ export const submitInspection = async (req: Request, res: Response) => {
       reportFile: inspectionData.reportFile ?? previousInspection?.reportFile,
     };
 
+    let resolvedReason: string | null = null;
+    if (finalStatus === 'failed') {
+      const r = inspectionData.reason;
+      const checked = validateFailedInspectionReason(r === undefined ? null : String(r));
+      if (!checked.ok) {
+        return res.status(400).json({ success: false, message: checked.message });
+      }
+      resolvedReason = checked.value;
+    }
+
     // Tạo bản ghi inspection
     const [newInspection] = await db
       .insert(inspections)
@@ -489,6 +532,7 @@ export const submitInspection = async (req: Request, res: Response) => {
         recommendation: finalInspectionData.recommendation,
         inspectionImages: finalInspectionData.inspectionImages,
         reportFile: finalInspectionData.reportFile,
+        reason: resolvedReason,
       })
       .returning();
 
@@ -741,13 +785,48 @@ export const updateInspection = async (req: Request, res: Response) => {
       // Auto-derive status from overallCondition
       finalUpdateData.status = ['excellent', 'good', 'fair'].includes(updateData.overallCondition) ? 'passed' : 'failed';
     }
-    
+
+    const setRow: Record<string, unknown> = {
+      updatedAt: new Date(),
+    };
+    const inspectionPatchKeys: (keyof InspectionFormData)[] = [
+      'status',
+      'overallCondition',
+      'frameCondition',
+      'brakeCondition',
+      'drivetrainCondition',
+      'wheelCondition',
+      'inspectionNote',
+      'recommendation',
+      'reportFile',
+      'inspectionImages',
+      'reason',
+    ];
+    const patch = finalUpdateData as Record<string, unknown>;
+    for (const key of inspectionPatchKeys) {
+      const v = patch[key as string];
+      if (v !== undefined) setRow[key as string] = v;
+    }
+    if (finalUpdateData.status === 'passed') {
+      setRow.reason = null;
+    }
+
+    const nextStatus = (setRow.status as string | undefined) ?? inspection.status;
+    if (nextStatus === 'failed') {
+      const reasonForCheck =
+        Object.prototype.hasOwnProperty.call(setRow, 'reason') ? (setRow.reason as string | null | undefined) : inspection.reason;
+      const checked = validateFailedInspectionReason(reasonForCheck);
+      if (!checked.ok) {
+        return res.status(400).json({ success: false, message: checked.message });
+      }
+      if (Object.prototype.hasOwnProperty.call(setRow, 'reason')) {
+        setRow.reason = checked.value;
+      }
+    }
+
     const [updatedInspection] = await db
       .update(inspections)
-      .set({
-        ...finalUpdateData,
-        updatedAt: new Date(),
-      })
+      .set(setRow as Partial<typeof inspections.$inferInsert>)
       .where(eq(inspections.id, inspectionId as string))
       .returning();
 

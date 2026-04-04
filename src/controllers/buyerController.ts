@@ -4,8 +4,65 @@ import { bikes, categories, transactions, wishlists, reports, messages, reviews,
 import { desc, eq, and, ilike, lte, gte, or, inArray, ne, type SQL } from 'drizzle-orm';
 import { ApiResponse } from '../models';
 import { TRANSACTION_TYPE_OPTIONS, TRANSACTION_TYPES } from '../constants/transactionTypes';
+import { mapTransactionsWithShippingAlias, withShippingAddressAlias } from '../utils/transactionResponse';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const TRANSACTION_ADDRESS_MAX_LEN = 2000;
+const TRANSACTION_FULL_NAME_MAX_LEN = 255;
+const TRANSACTION_PHONE_MAX_LEN = 20;
+const TRANSACTION_EMAIL_MAX_LEN = 255;
+
+function parseTransactionAddressInput(raw: unknown): { ok: true; value: string | null } | { ok: false; message: string } {
+  if (raw === undefined || raw === null) return { ok: true, value: null };
+  const t = String(raw).trim();
+  if (t.length > TRANSACTION_ADDRESS_MAX_LEN) {
+    return { ok: false, message: `Địa chỉ không quá ${TRANSACTION_ADDRESS_MAX_LEN} ký tự` };
+  }
+  return { ok: true, value: t || null };
+}
+
+function parseTransactionFullNameInput(raw: unknown): { ok: true; value: string | null } | { ok: false; message: string } {
+  if (raw === undefined || raw === null) return { ok: true, value: null };
+  const t = String(raw).trim();
+  if (t.length > TRANSACTION_FULL_NAME_MAX_LEN) {
+    return { ok: false, message: `Họ tên không quá ${TRANSACTION_FULL_NAME_MAX_LEN} ký tự` };
+  }
+  return { ok: true, value: t || null };
+}
+
+function parseTransactionPhoneInput(raw: unknown): { ok: true; value: string | null } | { ok: false; message: string } {
+  if (raw === undefined || raw === null) return { ok: true, value: null };
+  const t = String(raw).trim();
+  if (t.length > TRANSACTION_PHONE_MAX_LEN) {
+    return { ok: false, message: `Số điện thoại không quá ${TRANSACTION_PHONE_MAX_LEN} ký tự` };
+  }
+  const digits = t.replace(/\D/g, '');
+  if (digits.length < 10) {
+    return { ok: false, message: 'Số điện thoại phải có ít nhất 10 chữ số' };
+  }
+  return { ok: true, value: t || null };
+}
+
+function parseTransactionEmailInput(raw: unknown): { ok: true; value: string | null } | { ok: false; message: string } {
+  if (raw === undefined || raw === null) return { ok: true, value: null };
+  const t = String(raw).trim();
+  if (t.length > TRANSACTION_EMAIL_MAX_LEN) {
+    return { ok: false, message: `Email không quá ${TRANSACTION_EMAIL_MAX_LEN} ký tự` };
+  }
+  if (!t.includes('@')) {
+    return { ok: false, message: 'Email không hợp lệ' };
+  }
+  return { ok: true, value: t || null };
+}
+
+function resolveTransactionAddressRaw(body: Record<string, unknown>): unknown {
+  const a = body.address;
+  const s = body.shippingAddress;
+  if (a !== undefined && a !== null && String(a).trim() !== '') return a;
+  if (s !== undefined && s !== null && String(s).trim() !== '') return s;
+  return a !== undefined ? a : s;
+}
 
 // ============= SEARCH & BROWSE BIKES =============
 
@@ -299,6 +356,7 @@ export const getBikeDetail = async (req: Request, res: Response) => {
             wheelCondition: true,
             inspectionNote: true,
             recommendation: true,
+            reason: true,
             createdAt: true,
           },
         },
@@ -393,7 +451,31 @@ export const createTransaction = async (req: Request, res: Response) => {
       return res.status(403).json({ success: false, message: 'Sellers cannot purchase bikes' });
     }
 
-    const { bikeId, amount, transactionType = 'full_payment', paymentMethod, notes, fullName, phone, email, address } = req.body;
+    const { bikeId, amount, transactionType = 'full_payment', paymentMethod, notes } = req.body as {
+      bikeId?: string;
+      amount?: number;
+      transactionType?: string;
+      paymentMethod?: string;
+      notes?: string;
+    };
+    const body = req.body as Record<string, unknown>;
+
+    const parsedAddress = parseTransactionAddressInput(resolveTransactionAddressRaw(body));
+    if (!parsedAddress.ok) {
+      return res.status(400).json({ success: false, message: parsedAddress.message });
+    }
+    const parsedFullName = parseTransactionFullNameInput(body.fullName);
+    if (!parsedFullName.ok) {
+      return res.status(400).json({ success: false, message: parsedFullName.message });
+    }
+    const parsedPhone = parseTransactionPhoneInput(body.buyerPhone);
+    if (!parsedPhone.ok) {
+      return res.status(400).json({ success: false, message: parsedPhone.message });
+    }
+    const parsedEmail = parseTransactionEmailInput(body.buyerEmail);
+    if (!parsedEmail.ok) {
+      return res.status(400).json({ success: false, message: parsedEmail.message });
+    }
 
     if (!bikeId) {
       return res.status(400).json({ success: false, message: 'Thiếu thông tin bắt buộc: bikeId' });
@@ -403,36 +485,7 @@ export const createTransaction = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'ID xe không đúng định dạng' });
     }
 
-    // Validate buyer contact information
-    if (fullName && fullName.trim().length < 2) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Full name must be at least 2 characters' 
-      });
-    }
-
-    if (phone && phone.replace(/\D/g, '').length < 10) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Phone number must have at least 10 digits' 
-      });
-    }
-
-    if (email && !email.includes('@')) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Invalid email format' 
-      });
-    }
-
-    if (address && address.trim().length < 5) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Address must be at least 5 characters' 
-      });
-    }
-
-    if (!TRANSACTION_TYPE_OPTIONS.includes(transactionType)) {
+    if (!TRANSACTION_TYPE_OPTIONS.includes(transactionType as (typeof TRANSACTION_TYPE_OPTIONS)[number])) {
       return res.status(400).json({ 
         success: false, 
         message: `Invalid transaction type. Must be one of: ${TRANSACTION_TYPE_OPTIONS.join(', ')}`,
@@ -551,17 +604,17 @@ export const createTransaction = async (req: Request, res: Response) => {
         remainingBalance,
         paymentMethod: paymentMethod || null,
         notes: finalNotes || null,
-        buyerFullName: fullName || null,
-        buyerPhone: phone || null,
-        buyerEmail: email || null,
-        buyerAddress: address || null,
+        address: parsedAddress.value,
+        fullName: parsedFullName.value,
+        buyerPhone: parsedPhone.value,
+        buyerEmail: parsedEmail.value,
         status: 'pending',
       })
       .returning();
 
     res.status(201).json({
       success: true,
-      data: newTransaction,
+      data: withShippingAddressAlias(newTransaction),
       message: transactionType === TRANSACTION_TYPES.FULL_PAYMENT 
         ? 'Tạo đơn giao dịch đầy đủ thành công. Đang chờ seller xác nhận để thanh toán.'
         : 'Tạo đơn đặt cọc thành công. Đang chờ seller xác nhận để thanh toán.',
@@ -618,7 +671,7 @@ export const getMyTransactions = async (req: Request, res: Response) => {
 
     res.status(200).json({
       success: true,
-      data: myTransactions,
+      data: mapTransactionsWithShippingAlias(myTransactions),
       message: 'Danh sách giao dịch fetched successfully',
       meta: { total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) },
     });
@@ -659,6 +712,8 @@ export const getTransactionDetail = async (req: Request, res: Response) => {
         createdAt: true,
         updatedAt: true,
         notes: true,
+        address: true,
+        fullName: true,
       },
       with: {
         bike: {
@@ -691,7 +746,7 @@ export const getTransactionDetail = async (req: Request, res: Response) => {
 
     res.status(200).json({
       success: true,
-      data: transaction,
+      data: withShippingAddressAlias(transaction),
       message: 'Chi tiết giao dịch fetched successfully',
     });
   } catch (error) {
@@ -745,7 +800,11 @@ export const cancelTransaction = async (req: Request, res: Response) => {
       .where(and(eq(transactions.id, id), eq(transactions.buyerId, buyerId)))
       .returning();
 
-    res.status(200).json({ success: true, data: cancelled, message: 'Đơn đặt mua đã được hủy' });
+    res.status(200).json({
+      success: true,
+      data: withShippingAddressAlias(cancelled),
+      message: 'Đơn đặt mua đã được hủy',
+    });
   } catch (error) {
     res.status(500).json({
       success: false,

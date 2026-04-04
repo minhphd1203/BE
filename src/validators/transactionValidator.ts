@@ -10,9 +10,10 @@ export const createTransactionSchema = z.object({
   transactionType: z.enum(['full_payment', 'deposit', 'remaining_payment']).default('full_payment'),
   paymentMethod: z.string().min(1).max(50).optional().nullable(),
   notes: z.string().max(1000).optional().nullable(),
+  fullName: z.string().min(2).max(255).optional().nullable(),
   buyerPhone: z.string().min(10).max(20).optional().nullable(),
   buyerEmail: z.string().email('Invalid email format').optional().nullable(),
-  buyerAddress: z.string().min(5).max(500).optional().nullable(),
+  address: z.string().min(5).max(500).optional().nullable(),
 }).strict(); // strict() prevents extra fields from being silently ignored
 
 /**

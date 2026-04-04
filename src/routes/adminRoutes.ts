@@ -320,6 +320,18 @@ router.get('/v1/transaction', isAdmin, getAllTransaction);
  *               status:
  *                 type: string
  *                 enum: [pending, completed, cancelled]
+ *               notes:
+ *                 type: string
+ *                 nullable: true
+ *               address:
+ *                 type: string
+ *                 nullable: true
+ *               shippingAddress:
+ *                 type: string
+ *                 nullable: true
+ *               fullName:
+ *                 type: string
+ *                 nullable: true
  *     responses:
  *       200:
  *         description: Transaction updated successfully

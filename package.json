@@ -32,7 +32,8 @@
     "qrcode": "^1.5.4",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
-    "vnpay": "^2.4.4"
+    "vnpay": "^2.4.4",
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",

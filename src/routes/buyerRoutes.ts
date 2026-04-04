@@ -187,6 +187,18 @@ router.get('/v1/bikes/:bikeId', optionalAuth, getBikeDetail);
  *                 default: null
  *                 description: "(Optional) If not provided, automatically generated with deposit percentage and remaining balance"
  *                 example: "Tôi muốn đặt cọc 15% để giữ xe"
+ *               address:
+ *                 type: string
+ *                 nullable: true
+ *                 description: "Địa chỉ giao hàng (ưu tiên hơn shippingAddress)"
+ *               shippingAddress:
+ *                 type: string
+ *                 nullable: true
+ *                 description: "Alias FE — map vào address nếu address trống"
+ *               fullName:
+ *                 type: string
+ *                 nullable: true
+ *                 description: "Họ tên người nhận (max 255)"
  *     responses:
  *       201:
  *         description: Giao dịch thành công
@@ -218,6 +230,15 @@ router.get('/v1/bikes/:bikeId', optionalAuth, getBikeDetail);
  *                 remainingBalance:
  *                   type: number
  *                   description: "For deposits, the remaining amount to pay. Null for full payments"
+ *                 address:
+ *                   type: string
+ *                   nullable: true
+ *                 shippingAddress:
+ *                   type: string
+ *                   nullable: true
+ *                 fullName:
+ *                   type: string
+ *                   nullable: true
  *                 status:
  *                   type: string
  *       400:
