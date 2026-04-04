@@ -393,7 +393,7 @@ export const createTransaction = async (req: Request, res: Response) => {
       return res.status(403).json({ success: false, message: 'Sellers cannot purchase bikes' });
     }
 
-    const { bikeId, amount, transactionType = 'full_payment', paymentMethod, notes } = req.body;
+    const { bikeId, amount, transactionType = 'full_payment', paymentMethod, notes, fullName, phone, email, address } = req.body;
 
     if (!bikeId) {
       return res.status(400).json({ success: false, message: 'Thiếu thông tin bắt buộc: bikeId' });
@@ -401,6 +401,35 @@ export const createTransaction = async (req: Request, res: Response) => {
 
     if (!UUID_REGEX.test(bikeId)) {
       return res.status(400).json({ success: false, message: 'ID xe không đúng định dạng' });
+    }
+
+    // Validate buyer contact information
+    if (fullName && fullName.trim().length < 2) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Full name must be at least 2 characters' 
+      });
+    }
+
+    if (phone && phone.replace(/\D/g, '').length < 10) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Phone number must have at least 10 digits' 
+      });
+    }
+
+    if (email && !email.includes('@')) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid email format' 
+      });
+    }
+
+    if (address && address.trim().length < 5) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Address must be at least 5 characters' 
+      });
     }
 
     if (!TRANSACTION_TYPE_OPTIONS.includes(transactionType)) {
@@ -522,6 +551,10 @@ export const createTransaction = async (req: Request, res: Response) => {
         remainingBalance,
         paymentMethod: paymentMethod || null,
         notes: finalNotes || null,
+        buyerFullName: fullName || null,
+        buyerPhone: phone || null,
+        buyerEmail: email || null,
+        buyerAddress: address || null,
         status: 'pending',
       })
       .returning();

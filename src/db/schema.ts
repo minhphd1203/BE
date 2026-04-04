@@ -64,6 +64,10 @@ export const transactions = pgTable('transactions', {
   status: varchar('status', { length: 50 }).notNull().default('pending'), // pending, approved, completed, cancelled
   paymentMethod: varchar('payment_method', { length: 50 }),
   notes: text('notes'),
+  buyerFullName: varchar('buyer_full_name', { length: 255 }), // Buyer's full name for delivery
+  buyerPhone: varchar('buyer_phone', { length: 20 }), // Buyer contact number for delivery
+  buyerEmail: varchar('buyer_email', { length: 255 }), // Buyer email for confirmation
+  buyerAddress: text('buyer_address'), // Buyer delivery address
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
 });
