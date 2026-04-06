@@ -25,6 +25,7 @@ const options = {
       { name: 'Buyer', description: '🛒 Tìm kiếm, mua xe và quản lý giao dịch' },
       { name: 'Inspector', description: '🔍 Kiểm định xe đạp (Inspector only)' },
       { name: 'Payment', description: '💳 Thanh toán VNPay' },
+      { name: 'Fulfillment', description: '📦 Giao hàng & xác nhận nhận hàng (sau khi thanh toán đủ)' },
       { name: 'Health', description: '🟢 Kiểm tra trạng thái server' },
     ],
     components: {

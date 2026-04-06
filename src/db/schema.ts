@@ -66,6 +66,12 @@ export const transactions = pgTable('transactions', {
   notes: text('notes'),
   address: text('address'),
   fullName: text('full_name'),
+  /** preparing | delivering | delivered — chỉ dùng khi đã thanh toán xong và xe sold */
+  deliveryStatus: varchar('delivery_status', { length: 50 }),
+  deliveryNotes: text('delivery_notes'),
+  deliveredAt: timestamp('delivered_at'),
+  receiptConfirmedAt: timestamp('receipt_confirmed_at'),
+  deliveryUpdatedAt: timestamp('delivery_updated_at'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
 });

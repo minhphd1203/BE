@@ -40,8 +40,9 @@ export async function autoExpireTransactions() {
     // Process each expired transaction
     for (const txn of expiredTransactions) {
       try {
-        // Update transaction status to cancelled
-        const [cancelledTxn] = await db
+        const [bike] = await db.select().from(bikes).where(eq(bikes.id, txn.bikeId)).limit(1);
+
+        await db
           .update(transactions)
           .set({
             status: 'cancelled',
@@ -51,18 +52,22 @@ export async function autoExpireTransactions() {
           .where(eq(transactions.id, txn.id))
           .returning();
 
-        // Unhide bike back to approved
-        const [unHiddenBike] = await db
-          .update(bikes)
-          .set({
-            status: 'approved',
-            updatedAt: new Date(),
-          })
-          .where(eq(bikes.id, txn.bikeId))
-          .returning();
+        // Chỉ mở lại công khai nếu xe đang hidden (đúng workflow seller đã duyệt đơn)
+        if (bike?.status === 'hidden') {
+          await db
+            .update(bikes)
+            .set({
+              status: 'approved',
+              updatedAt: new Date(),
+            })
+            .where(eq(bikes.id, txn.bikeId))
+            .returning();
+        }
 
         console.log(
-          `[AutoExpire] ✓ Expired transaction ${txn.id.slice(0, 8)}... → Cancelled, Bike restored to approved`
+          `[AutoExpire] ✓ Expired transaction ${txn.id.slice(0, 8)}... → Cancelled; bike ${bike?.status ?? '?'} → ${
+            bike?.status === 'hidden' ? 'approved' : 'unchanged'
+          }`
         );
       } catch (err) {
         console.error(

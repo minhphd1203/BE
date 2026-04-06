@@ -10,8 +10,6 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 
 const TRANSACTION_ADDRESS_MAX_LEN = 2000;
 const TRANSACTION_FULL_NAME_MAX_LEN = 255;
-const TRANSACTION_PHONE_MAX_LEN = 20;
-const TRANSACTION_EMAIL_MAX_LEN = 255;
 
 function parseTransactionAddressInput(raw: unknown): { ok: true; value: string | null } | { ok: false; message: string } {
   if (raw === undefined || raw === null) return { ok: true, value: null };
@@ -27,31 +25,6 @@ function parseTransactionFullNameInput(raw: unknown): { ok: true; value: string 
   const t = String(raw).trim();
   if (t.length > TRANSACTION_FULL_NAME_MAX_LEN) {
     return { ok: false, message: `Họ tên không quá ${TRANSACTION_FULL_NAME_MAX_LEN} ký tự` };
-  }
-  return { ok: true, value: t || null };
-}
-
-function parseTransactionPhoneInput(raw: unknown): { ok: true; value: string | null } | { ok: false; message: string } {
-  if (raw === undefined || raw === null) return { ok: true, value: null };
-  const t = String(raw).trim();
-  if (t.length > TRANSACTION_PHONE_MAX_LEN) {
-    return { ok: false, message: `Số điện thoại không quá ${TRANSACTION_PHONE_MAX_LEN} ký tự` };
-  }
-  const digits = t.replace(/\D/g, '');
-  if (digits.length < 10) {
-    return { ok: false, message: 'Số điện thoại phải có ít nhất 10 chữ số' };
-  }
-  return { ok: true, value: t || null };
-}
-
-function parseTransactionEmailInput(raw: unknown): { ok: true; value: string | null } | { ok: false; message: string } {
-  if (raw === undefined || raw === null) return { ok: true, value: null };
-  const t = String(raw).trim();
-  if (t.length > TRANSACTION_EMAIL_MAX_LEN) {
-    return { ok: false, message: `Email không quá ${TRANSACTION_EMAIL_MAX_LEN} ký tự` };
-  }
-  if (!t.includes('@')) {
-    return { ok: false, message: 'Email không hợp lệ' };
   }
   return { ok: true, value: t || null };
 }
@@ -468,14 +441,6 @@ export const createTransaction = async (req: Request, res: Response) => {
     if (!parsedFullName.ok) {
       return res.status(400).json({ success: false, message: parsedFullName.message });
     }
-    const parsedPhone = parseTransactionPhoneInput(body.buyerPhone);
-    if (!parsedPhone.ok) {
-      return res.status(400).json({ success: false, message: parsedPhone.message });
-    }
-    const parsedEmail = parseTransactionEmailInput(body.buyerEmail);
-    if (!parsedEmail.ok) {
-      return res.status(400).json({ success: false, message: parsedEmail.message });
-    }
 
     if (!bikeId) {
       return res.status(400).json({ success: false, message: 'Thiếu thông tin bắt buộc: bikeId' });
@@ -606,8 +571,6 @@ export const createTransaction = async (req: Request, res: Response) => {
         notes: finalNotes || null,
         address: parsedAddress.value,
         fullName: parsedFullName.value,
-        buyerPhone: parsedPhone.value,
-        buyerEmail: parsedEmail.value,
         status: 'pending',
       })
       .returning();

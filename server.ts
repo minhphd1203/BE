@@ -17,11 +17,13 @@ import sellerRoutes from './src/routes/sellerRoutes';
 import paymentRoutes from './src/routes/paymentRoutes';
 import profileRoutes from './src/routes/profileRoutes';
 import messageRoutes from './src/routes/messageRoutes';
+import fulfillmentRoutes from './src/routes/fulfillmentRoutes';
 import { specs } from './src/swagger';
 import { db, client } from './src/db';
 import { users } from './src/db/schema';
 import { eq } from 'drizzle-orm';
 import { startAutoExpireJob } from './src/jobs/autoExpireTransactions';
+import { startFulfillmentJobs } from './src/jobs/fulfillmentJobs';
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -200,6 +202,7 @@ app.use('/api/seller', sellerRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/messages', messageRoutes);
+app.use('/api/fulfillment', fulfillmentRoutes);
 
 // Sync migration tracking records when schema was set up via db:push (tables exist but __drizzle_migrations is empty)
 async function ensureMigrationsTracked(migrationsFolder: string) {
@@ -378,6 +381,7 @@ async function bootstrap() {
 
     // Start background jobs
     startAutoExpireJob();
+    startFulfillmentJobs();
   });
 
   server.on('error', (err: NodeJS.ErrnoException) => {

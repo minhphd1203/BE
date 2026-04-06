@@ -5,6 +5,7 @@ import { db } from '../db';
 import { transactions, bikes } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { withShippingAddressAlias } from '../utils/transactionResponse';
+import { markFulfillmentPreparingAfterBikeSold } from '../services/fulfillmentSync';
 
 // ============= VNPAY MANUAL IMPLEMENTATION =============
 // Implement theo đúng tài liệu chính thức VNPay để tránh encoding issues
@@ -579,6 +580,16 @@ export const vnpayIPN = async (req: Request, res: Response) => {
       console.log('[VNPay IPN] ❌ ERROR: No bike rows updated! Bike ID:', transaction.bikeId);
       return res.json({ RspCode: '99', Message: 'Failed to update bike status' });
     }
+
+    if (bikeStatus === 'sold') {
+      await markFulfillmentPreparingAfterBikeSold(
+        transaction.bikeId,
+        transaction.buyerId,
+        transaction.sellerId
+      );
+      console.log(`[VNPay IPN] ✓ Fulfillment initialized (preparing) for sold bike ${transaction.bikeId}`);
+    }
+
     console.log(`[VNPay IPN] ✓ Payment success for transaction ${transaction.id}`);
     return res.json({ RspCode: '00', Message: 'Confirm success' });
   } catch (error) {
