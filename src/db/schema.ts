@@ -10,6 +10,11 @@ export const users = pgTable('users', {
   phone: varchar('phone', { length: 50 }),
   avatar: text('avatar'),
   role: varchar('role', { length: 50 }).notNull().default('user'),
+  // Bank account info (for seller payouts)
+  bankAccountNumber: varchar('bank_account_number', { length: 50 }), // IBAN or local account number
+  bankAccountHolder: varchar('bank_account_holder', { length: 255 }), // Account holder name
+  bankCode: varchar('bank_code', { length: 10 }), // e.g., "VCB" for Vietcombank
+  bankBranch: varchar('bank_branch', { length: 100 }), // Branch name (optional)
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
 },
@@ -52,6 +57,16 @@ export const bikes = pgTable('bikes', {
   updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
 });
 
+// Delivery table (separate fulfillment tracking) - MUST be before transactions (forward reference fix)
+export const deliveries = pgTable('deliveries', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  deliveryStatus: varchar('delivery_status', { length: 50 }).notNull().default('preparing'), // preparing, delivering, delivered
+  deliveryNotes: text('delivery_notes'), // Seller notes during delivery
+  receiptConfirmedAt: timestamp('receipt_confirmed_at'), // When buyer confirmed delivery
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()), // Last delivery status update (auto-updated)
+});
+
 // Transaction table
 export const transactions = pgTable('transactions', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -64,14 +79,34 @@ export const transactions = pgTable('transactions', {
   status: varchar('status', { length: 50 }).notNull().default('pending'), // pending, approved, completed, cancelled
   paymentMethod: varchar('payment_method', { length: 50 }),
   notes: text('notes'),
-  address: text('address'),
-  fullName: text('full_name'),
-  /** preparing | delivering | delivered — chỉ dùng khi đã thanh toán xong và xe sold */
-  deliveryStatus: varchar('delivery_status', { length: 50 }),
-  deliveryNotes: text('delivery_notes'),
-  deliveredAt: timestamp('delivered_at'),
-  receiptConfirmedAt: timestamp('receipt_confirmed_at'),
-  deliveryUpdatedAt: timestamp('delivery_updated_at'),
+  address: text('address'), // Buyer delivery address
+  fullName: text('full_name'), // Buyer's full name
+  buyerPhone: varchar('buyer_phone', { length: 20 }), // Buyer contact number
+  buyerEmail: varchar('buyer_email', { length: 255 }), // Buyer email
+  deliveryId: uuid('delivery_id').references(() => deliveries.id), // FK to delivery
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
+});
+
+// Payouts table (seller payout tracking - after delivery confirmed)
+export const payouts = pgTable('payouts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  transactionId: uuid('transaction_id').notNull().references(() => transactions.id),
+  sellerId: uuid('seller_id').notNull().references(() => users.id),
+  amount: doublePrecision('amount').notNull(), // Exact amount from transaction
+  bankAccountNumber: varchar('bank_account_number', { length: 50 }).notNull(),
+  bankAccountHolder: varchar('bank_account_holder', { length: 255 }).notNull(),
+  bankCode: varchar('bank_code', { length: 10 }).notNull(),
+  bankBranch: varchar('bank_branch', { length: 100 }), // Optional
+  // Status flow: pending → processing → completed / failed
+  status: varchar('status', { length: 50 }).notNull().default('pending'), // pending, processing, completed, failed
+  payoutAt: timestamp('payout_at'), // When payout initiated
+  completedAt: timestamp('completed_at'), // When provider confirmed
+  // Idempotency & tracking
+  externalPayoutId: varchar('external_payout_id', { length: 100 }).unique(), // Provider reference
+  providerTransactionId: varchar('provider_transaction_id', { length: 100 }), // Bank reference number
+  failureReason: text('failure_reason'), // If failed
+  webhookReceivedAt: timestamp('webhook_received_at'), // When callback received
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
 });
@@ -91,7 +126,7 @@ export const inspections = pgTable('inspections', {
   recommendation: text('recommendation'),
   inspectionImages: text('inspection_images').array().default([]),
   reportFile: text('report_file'),
-  reason: text('reason'),
+  reason: text('reason'), // Reason for failed inspection
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
 });
@@ -139,7 +174,7 @@ export const conversationThreads = pgTable('conversation_threads', {
   id: uuid('id').primaryKey().defaultRandom(),
   participant1Id: uuid('participant1_id').notNull().references(() => users.id), // First participant (can be any role)
   participant2Id: uuid('participant2_id').notNull().references(() => users.id), // Second participant (can be any role)
-  bikeId: uuid('bike_id').references(() => bikes.id), // Context bike (optional, allows filtering threads by bike)
+  bikeId: uuid('bike_id').notNull().references(() => bikes.id), // Context bike (mandatory now)
   status: varchar('status', { length: 50 }).notNull().default('open'), // 'open' or 'closed'
   closedAt: timestamp('closed_at'), // When thread was closed
   closedBy: uuid('closed_by').references(() => users.id), // Who closed it (admin/inspector)
@@ -190,6 +225,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   receivedReviews: many(reviews, { relationName: 'reviewedSeller' }),
   conversationThreadsAsParticipant1: many(conversationThreads, { relationName: 'participant1' }),
   conversationThreadsAsParticipant2: many(conversationThreads, { relationName: 'participant2' }),
+  payouts: many(payouts),
 }));
 
 export const categoriesRelations = relations(categories, ({ many }) => ({
@@ -239,7 +275,7 @@ export const bikesRelations = relations(bikes, ({ one, many }) => ({
   conversationThreads: many(conversationThreads),
 }));
 
-export const transactionsRelations = relations(transactions, ({ one }) => ({
+export const transactionsRelations = relations(transactions, ({ one, many }) => ({
   bike: one(bikes, {
     fields: [transactions.bikeId],
     references: [bikes.id],
@@ -253,6 +289,26 @@ export const transactionsRelations = relations(transactions, ({ one }) => ({
     fields: [transactions.sellerId],
     references: [users.id],
     relationName: 'seller',
+  }),
+  delivery: one(deliveries, {
+    fields: [transactions.deliveryId],
+    references: [deliveries.id],
+  }),
+  payouts: many(payouts),
+}));
+
+export const deliveriesRelations = relations(deliveries, ({ many }) => ({
+  transactions: many(transactions),
+}));
+
+export const payoutsRelations = relations(payouts, ({ one }) => ({
+  transaction: one(transactions, {
+    fields: [payouts.transactionId],
+    references: [transactions.id],
+  }),
+  seller: one(users, {
+    fields: [payouts.sellerId],
+    references: [users.id],
   }),
 }));
 

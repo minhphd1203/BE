@@ -1,5 +1,5 @@
 import express from 'express';
-import { upgradeToSeller, downgradeFromSeller, getProfile, getOtherProfile } from '../controllers/profileController';
+import { upgradeToSeller, downgradeFromSeller, getProfile, getOtherProfile, updateProfile } from '../controllers/profileController';
 import { isAuthenticated } from '../middleware/authMiddleware';
 
 const router = express.Router();
@@ -227,5 +227,59 @@ router.post('/v1/downgrade-seller', downgradeFromSeller);
  *         description: Server error
  */
 router.get('/v1/:userId', getOtherProfile);
+
+/**
+ * @swagger
+ * /api/profile/v1/update:
+ *   put:
+ *     summary: Update current user's profile information
+ *     tags: [Profile]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name:
+ *                 type: string
+ *                 maxLength: 255
+ *                 example: "Nguyễn Như Quân"
+ *               phone:
+ *                 type: string
+ *                 maxLength: 50
+ *                 example: "0901234567"
+ *               avatar:
+ *                 type: string
+ *                 format: uri
+ *                 example: "https://example.com/avatar.jpg"
+ *               bankAccountNumber:
+ *                 type: string
+ *                 maxLength: 50
+ *                 example: "1234567890"
+ *               bankAccountHolder:
+ *                 type: string
+ *                 maxLength: 255
+ *                 example: "Nguyễn Văn A"
+ *               bankCode:
+ *                 type: string
+ *                 maxLength: 10
+ *                 example: "VCB"
+ *               bankBranch:
+ *                 type: string
+ *                 maxLength: 100
+ *                 example: "Chi nhánh Hà Nội"
+ *     responses:
+ *       200:
+ *         description: Profile updated successfully
+ *       400:
+ *         description: Bad request - validation error
+ *       404:
+ *         description: User not found
+ *       500:
+ *         description: Server error
+ */
+router.put('/v1/update', updateProfile);
 
 export default router;

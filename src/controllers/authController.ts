@@ -14,6 +14,17 @@ export const checkRoles = async (req: Request, res: Response) => {
     // Tìm TẤT CẢ users với email này
     const allUsers = await db.query.users.findMany({
       where: eq(users.email, email),
+      columns: {
+        id: true,
+        email: true,
+        password: true,
+        name: true,
+        phone: true,
+        avatar: true,
+        role: true,
+        createdAt: true,
+        updatedAt: true,
+      },
     });
 
     if (!allUsers.length) {
@@ -75,6 +86,11 @@ export const register = async (req: Request, res: Response) => {
         eq(users.email, email),
         eq(users.role, role)
       ),
+      columns: {
+        id: true,
+        email: true,
+        role: true,
+      },
     });
 
     if (existingUser) {
@@ -142,6 +158,17 @@ export const login = async (req: Request, res: Response) => {
         eq(users.email, email),
         eq(users.role, role)
       ),
+      columns: {
+        id: true,
+        email: true,
+        password: true,
+        name: true,
+        phone: true,
+        avatar: true,
+        role: true,
+        createdAt: true,
+        updatedAt: true,
+      },
     });
 
     if (!user) {

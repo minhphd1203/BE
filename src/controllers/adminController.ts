@@ -405,6 +405,25 @@ export const deleteUser = async (req: Request, res: Response) => {
 export const getAllTransaction = async (req: Request, res: Response) => {
   try {
     const allTransactions = await db.query.transactions.findMany({
+      columns: {
+        id: true,
+        bikeId: true,
+        buyerId: true,
+        sellerId: true,
+        amount: true,
+        transactionType: true,
+        remainingBalance: true,
+        status: true,
+        paymentMethod: true,
+        notes: true,
+        address: true,
+        fullName: true,
+        buyerPhone: true,
+        buyerEmail: true,
+        deliveryId: true,
+        createdAt: true,
+        updatedAt: true,
+      },
       with: {
         bike: {
           columns: {
@@ -427,6 +446,16 @@ export const getAllTransaction = async (req: Request, res: Response) => {
             name: true,
             email: true,
             phone: true,
+          }
+        },
+        delivery: {
+          columns: {
+            id: true,
+            deliveryStatus: true,
+            deliveryNotes: true,
+            receiptConfirmedAt: true,
+            createdAt: true,
+            updatedAt: true,
           }
         }
       },

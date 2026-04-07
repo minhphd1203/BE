@@ -4,6 +4,7 @@ import { db } from '../db';
 import { users, transactions, bikes } from '../db/schema';
 import { eq, and, ne } from 'drizzle-orm';
 import { ApiResponse, JwtPayload } from '../models';
+import { updateProfileSchemaWithBankValidation } from '../validators/profileValidator';
 
 /**
  * POST /api/profile/v1/upgrade-seller
@@ -184,6 +185,10 @@ export const getProfile = async (req: Request, res: Response) => {
         phone: true,
         role: true,
         avatar: true,
+        bankAccountNumber: true,
+        bankAccountHolder: true,
+        bankCode: true,
+        bankBranch: true,
         createdAt: true,
         updatedAt: true,
         password: false, // Do not return password
@@ -262,6 +267,120 @@ export const getOtherProfile = async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       message: 'Error fetching profile',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
+ * PUT /api/profile/v1/update
+ * Update user's own profile information (editable fields only)
+ * Can update: name, phone, avatar, bank account details
+ * Validates all fields using Zod schema
+ */
+export const updateProfile = async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.userId;
+
+    // Validate input using Zod schema
+    const validationResult = updateProfileSchemaWithBankValidation.safeParse(req.body);
+    
+    if (!validationResult.success) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors: validationResult.error.flatten().fieldErrors,
+      });
+    }
+
+    const validatedData = validationResult.data;
+
+    // Check current user exists
+    const currentUser = await db.query.users.findFirst({
+      where: eq(users.id, userId),
+    });
+
+    if (!currentUser) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    // Check if any fields were actually provided
+    if (Object.keys(validatedData).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No fields to update. Please provide at least one field: name, phone, avatar, or bank account information',
+      });
+    }
+
+    // Build update object with only provided fields
+    const updateData: any = {};
+
+    // Add name if provided
+    if (validatedData.name !== undefined) {
+      updateData.name = validatedData.name.trim();
+    }
+
+    // Add phone if provided
+    if (validatedData.phone !== undefined) {
+      updateData.phone = validatedData.phone === null ? null : validatedData.phone.trim();
+    }
+
+    // Add avatar if provided
+    if (validatedData.avatar !== undefined) {
+      updateData.avatar = validatedData.avatar === null ? null : validatedData.avatar.trim();
+    }
+
+    // Add bank information if provided
+    if (validatedData.bankAccountNumber !== undefined) {
+      updateData.bankAccountNumber = validatedData.bankAccountNumber.trim();
+    }
+    if (validatedData.bankAccountHolder !== undefined) {
+      updateData.bankAccountHolder = validatedData.bankAccountHolder.trim();
+    }
+    if (validatedData.bankCode !== undefined) {
+      updateData.bankCode = validatedData.bankCode.trim();
+    }
+    if (validatedData.bankBranch !== undefined) {
+      updateData.bankBranch = validatedData.bankBranch === null ? null : validatedData.bankBranch.trim();
+    }
+
+    // Add updated timestamp
+    updateData.updatedAt = new Date();
+
+    // Perform update
+    const [updatedUser] = await db
+      .update(users)
+      .set(updateData)
+      .where(eq(users.id, userId))
+      .returning({
+        id: users.id,
+        email: users.email,
+        name: users.name,
+        phone: users.phone,
+        avatar: users.avatar,
+        role: users.role,
+        bankAccountNumber: users.bankAccountNumber,
+        bankAccountHolder: users.bankAccountHolder,
+        bankCode: users.bankCode,
+        bankBranch: users.bankBranch,
+        createdAt: users.createdAt,
+        updatedAt: users.updatedAt,
+      });
+
+    const response: ApiResponse = {
+      success: true,
+      data: updatedUser,
+      message: 'Profile updated successfully',
+    };
+
+    res.status(200).json(response);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error updating profile',
       error: error instanceof Error ? error.message : 'Unknown error',
     });
   }

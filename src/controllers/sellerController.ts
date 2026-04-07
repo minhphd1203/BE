@@ -845,12 +845,34 @@ export const getMyTransactions = async (req: Request, res: Response) => {
 
     const myTransactions = await db.query.transactions.findMany({
       where: and(...filters),
+      columns: {
+        id: true,
+        bikeId: true,
+        buyerId: true,
+        sellerId: true,
+        amount: true,
+        transactionType: true,
+        remainingBalance: true,
+        status: true,
+        paymentMethod: true,
+        notes: true,
+        address: true,
+        fullName: true,
+        buyerPhone: true,
+        buyerEmail: true,
+        deliveryId: true,
+        createdAt: true,
+        updatedAt: true,
+      },
       with: {
         bike: {
           columns: { id: true, title: true, brand: true, model: true, price: true, images: true },
         },
         buyer: {
           columns: { id: true, name: true, email: true, phone: true, avatar: true },
+        },
+        delivery: {
+          columns: { id: true, deliveryStatus: true, deliveryNotes: true, receiptConfirmedAt: true, createdAt: true, updatedAt: true },
         },
       },
       orderBy: [desc(transactions.createdAt)],
@@ -888,6 +910,25 @@ export const getMyTransactionById = async (req: Request, res: Response) => {
 
     const row = await db.query.transactions.findFirst({
       where: and(eq(transactions.id, id), eq(transactions.sellerId, sellerId)),
+      columns: {
+        id: true,
+        bikeId: true,
+        buyerId: true,
+        sellerId: true,
+        amount: true,
+        transactionType: true,
+        remainingBalance: true,
+        status: true,
+        paymentMethod: true,
+        notes: true,
+        address: true,
+        fullName: true,
+        buyerPhone: true,
+        buyerEmail: true,
+        deliveryId: true,
+        createdAt: true,
+        updatedAt: true,
+      },
       with: {
         bike: {
           columns: {
@@ -902,6 +943,9 @@ export const getMyTransactionById = async (req: Request, res: Response) => {
         },
         buyer: {
           columns: { id: true, name: true, email: true, phone: true, avatar: true },
+        },
+        delivery: {
+          columns: { id: true, deliveryStatus: true, deliveryNotes: true, receiptConfirmedAt: true, createdAt: true, updatedAt: true },
         },
       },
     });

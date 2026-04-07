@@ -619,12 +619,34 @@ export const getMyTransactions = async (req: Request, res: Response) => {
 
     const myTransactions = await db.query.transactions.findMany({
       where: and(...filters),
+      columns: {
+        id: true,
+        bikeId: true,
+        buyerId: true,
+        sellerId: true,
+        amount: true,
+        transactionType: true,
+        remainingBalance: true,
+        status: true,
+        paymentMethod: true,
+        notes: true,
+        address: true,
+        fullName: true,
+        buyerPhone: true,
+        buyerEmail: true,
+        deliveryId: true,
+        createdAt: true,
+        updatedAt: true,
+      },
       with: {
         bike: {
           columns: { id: true, title: true, brand: true, model: true, price: true, images: true, status: true },
         },
         seller: {
           columns: { id: true, name: true, email: true, phone: true, avatar: true },
+        },
+        delivery: {
+          columns: { id: true, deliveryStatus: true, deliveryNotes: true, receiptConfirmedAt: true, createdAt: true, updatedAt: true },
         },
       },
       orderBy: [desc(transactions.createdAt)],
@@ -696,6 +718,9 @@ export const getTransactionDetail = async (req: Request, res: Response) => {
         },
         seller: {
           columns: { id: true, name: true, avatar: true, phone: true },
+        },
+        delivery: {
+          columns: { id: true, deliveryStatus: true, deliveryNotes: true, receiptConfirmedAt: true, createdAt: true, updatedAt: true },
         },
       },
     });
