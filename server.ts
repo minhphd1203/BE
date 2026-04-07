@@ -200,6 +200,7 @@ app.use('/api/inspector', inspectorRoutes);
 app.use('/api/buyer', buyerRoutes);
 app.use('/api/seller', sellerRoutes);
 app.use('/api/payment', paymentRoutes);
+
 app.use('/api/profile', profileRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/fulfillment', fulfillmentRoutes);

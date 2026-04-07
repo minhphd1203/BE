@@ -1,8 +1,10 @@
 import { z } from 'zod';
+import { vietnamesePhoneValidator, emailValidator } from './commonValidators';
 
 /**
  * Validation schema for creating a transaction
  * Ensures only expected fields are sent, catches unexpected fields early
+ * Uses common validators for phone and email
  */
 export const createTransactionSchema = z.object({
   bikeId: z.string().uuid('Invalid bike ID format'),
@@ -11,8 +13,8 @@ export const createTransactionSchema = z.object({
   paymentMethod: z.string().min(1).max(50).optional().nullable(),
   notes: z.string().max(1000).optional().nullable(),
   fullName: z.string().min(2).max(255).optional().nullable(),
-  buyerPhone: z.string().min(10).max(20).optional().nullable(),
-  buyerEmail: z.string().email('Invalid email format').optional().nullable(),
+  buyerPhone: vietnamesePhoneValidator.optional().nullable(),
+  buyerEmail: emailValidator.optional().nullable(),
   address: z.string().min(5).max(500).optional().nullable(),
 }).strict(); // strict() prevents extra fields from being silently ignored
 

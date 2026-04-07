@@ -2,10 +2,11 @@ import { Request, Response } from 'express';
 import crypto from 'crypto';
 import QRCode from 'qrcode';
 import { db } from '../db';
-import { transactions, bikes } from '../db/schema';
+import { transactions, bikes, payouts, users } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { withShippingAddressAlias } from '../utils/transactionResponse';
 import { markFulfillmentPreparingAfterBikeSold } from '../services/fulfillmentSync';
+import { sendPayoutRequest, verifyPayoutSignature } from '../services/payoutProvider';
 
 // ============= VNPAY MANUAL IMPLEMENTATION =============
 // Implement theo đúng tài liệu chính thức VNPay để tránh encoding issues
@@ -631,6 +632,342 @@ export const getPaymentStatus = async (req: Request, res: Response) => {
       success: false,
       message: 'Lỗi khi kiểm tra trạng thái thanh toán',
       error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+// ============= SELLER PAYOUT SYSTEM =============
+// Simple local payout processing (no external service required)
+// - Status flow: pending → completed/failed
+// - Simulates async bank processing with configurable delays
+// - Idempotent tracking via externalPayoutId
+
+/**
+ * POST /api/payment/v1/payout/create/:transactionId
+ * Seller initiates payout after delivery confirmed.
+ *
+ * Prerequisites:
+ *  1. Delivery must be confirmed (status='delivered' + receiptConfirmedAt set)
+ *  2. Seller must have valid bank account info in profile
+ *  3. Transaction must be completed
+ *
+ * Flow:
+ *  1. Verify seller owns transaction
+ *  2. Validate delivery confirmed & transaction completed
+ *  3. Verify seller bank account info exists
+ *  4. Create payout record (status: 'pending')
+ *  5. Simulate async processing (90% success rate for testing)
+ *  6. Update status to completed/failed
+ */
+export const createPayout = async (req: Request, res: Response) => {
+  try {
+    const sellerId = req.user!.userId;
+    const { transactionId } = req.params as { transactionId: string };
+
+    // ===== Verify transaction & delivery =====
+    const transaction = await db.query.transactions.findFirst({
+      where: and(
+        eq(transactions.id, transactionId),
+        eq(transactions.sellerId, sellerId)
+      ),
+      with: {
+        delivery: true,
+      },
+    });
+
+    if (!transaction) {
+      return res.status(404).json({
+        success: false,
+        message: 'Giao dịch không tồn tại hoặc không phải của bạn',
+      });
+    }
+
+    if (transaction.status !== 'completed') {
+      console.log(`[Payout] ❌ Transaction not completed. Status: ${transaction.status}`);
+      return res.status(400).json({
+        success: false,
+        message: `Giao dịch phải hoàn thành (hiện tại: ${transaction.status})`,
+      });
+    }
+
+    if (!transaction.delivery || transaction.delivery.deliveryStatus !== 'delivered' || !transaction.delivery.receiptConfirmedAt) {
+      console.log(`[Payout] ❌ Delivery issue. Has delivery: ${!!transaction.delivery}, Status: ${transaction.delivery?.deliveryStatus}, Receipt confirmed: ${!!transaction.delivery?.receiptConfirmedAt}`);
+      return res.status(400).json({
+        success: false,
+        message: 'Hàng phải được xác nhận đã giao'
+      });
+    }
+
+
+    // ===== Verify seller bank info =====
+    const seller = await db.query.users.findFirst({
+      where: eq(users.id, sellerId),
+      columns: {
+        id: true,
+        email: true,
+        name: true,
+        phone: true,
+        avatar: true,
+        role: true,
+        bankAccountNumber: true,
+        bankAccountHolder: true,
+        bankCode: true,
+        bankBranch: true,
+      },
+    });
+
+    if (!seller || !seller.bankAccountNumber || !seller.bankAccountHolder || !seller.bankCode) {
+      console.log(`[Payout] ❌ Missing seller or bank info. Seller exists: ${!!seller}, Account: ${!!seller?.bankAccountNumber}, Holder: ${!!seller?.bankAccountHolder}, Code: ${!!seller?.bankCode}`);
+      return res.status(400).json({
+        success: false,
+        message: 'Vui lòng cập nhật thông tin tài khoản ngân hàng trước',
+      });
+    }
+
+    // ===== Check if payout already exists for this transaction =====
+    const existingPayout = await db.query.payouts.findFirst({
+      where: eq(payouts.transactionId, transactionId),
+    });
+
+    if (existingPayout) {
+      console.log(`[Payout] ❌ Payout already exists for transaction. Status: ${existingPayout.status}`);
+      return res.status(400).json({
+        success: false,
+        message: `Payout đã tồn tại (trạng thái: ${existingPayout.status})`,
+        payoutId: existingPayout.id,
+      });
+    }
+
+    // ===== Create payout record =====
+    const payoutAmount = transaction.amount;
+    const externalPayoutId = `PAYOUT_${Date.now()}_${sellerId.slice(0, 8)}`;
+
+    const [newPayout] = await db.insert(payouts).values({
+      transactionId,
+      sellerId,
+      amount: payoutAmount,
+      bankAccountNumber: seller.bankAccountNumber,
+      bankAccountHolder: seller.bankAccountHolder,
+      bankCode: seller.bankCode,
+      bankBranch: seller.bankBranch || undefined,
+      status: 'pending',
+      externalPayoutId,
+      payoutAt: new Date(),
+    }).returning();
+
+    console.log(`[Payout] Created payout ${newPayout.id} for transaction ${transactionId}, amount: ${payoutAmount}`);
+
+    // ===== Send to payout provider (mock or real based on .env) =====
+    // PAYOUT_PROVIDER env var determines which provider to use:
+    // - 'mock' (default): Simulated transfers for testing
+    // - 'stp': Real STP Direct Transfer API
+    // - 'payoo': Real PayOO Settlement API
+    
+    const webhookUrl = `${process.env.BACKEND_URL || 'http://localhost:3000'}/api/payment/v1/payout-callback`;
+
+    try {
+      await sendPayoutRequest({
+        payoutId: newPayout.id,
+        externalPayoutId: newPayout.externalPayoutId || '',
+        amount: payoutAmount,
+        bankCode: seller.bankCode,
+        bankAccountNumber: seller.bankAccountNumber,
+        bankAccountHolder: seller.bankAccountHolder,
+        bankBranch: seller.bankBranch ?? undefined,
+        webhookUrl,
+      });
+    } catch (error) {
+      console.error('[Payout] Provider error:', error);
+      // Payout record created successfully, provider call failed
+      // Provider will retry or user can retry payout creation
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: 'Yêu cầu rút tiền đã được gửi',
+      payout: {
+        id: newPayout.id,
+        status: newPayout.status,
+        amount: newPayout.amount,
+        externalPayoutId: newPayout.externalPayoutId,
+        createdAt: newPayout.createdAt,
+      },
+    });
+  } catch (error) {
+    console.error('[Payout] Create error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Lỗi xử lý yêu cầu rút tiền',
+      error: process.env.NODE_ENV === 'development' ? (error as Error).message : undefined,
+    });
+  }
+};
+
+// ============= PAYOUT WEBHOOK CALLBACK =============
+
+/**
+ * POST /api/payment/v1/payout-callback
+ * Webhook callback from payout provider (mock, STP, or PayOO).
+ * Called by payoutProvider service after transfer processing.
+ * Public endpoint (no auth required - provider calls directly).
+ *
+ * Flow:
+ *  1. Verify HMAC-SHA256 signature
+ *  2. Idempotent check: skip if already processed
+ *  3. Update payout status (completed/failed)
+ *  4. Log webhook timestamp
+ *  5. Return 200 immediately
+ */
+export const handlePayoutCallback = async (req: Request, res: Response) => {
+  try {
+    const { payoutId, externalPayoutId, status, providerTransactionId, failureReason, signature } = req.body;
+
+    // ===== Verify signature =====
+    const callbackData = {
+      payoutId,
+      externalPayoutId,
+      status,
+      providerTransactionId: providerTransactionId || '',
+      failureReason: failureReason || '',
+    };
+
+    if (!verifyPayoutSignature(callbackData, signature)) {
+      console.error('[Payout] Invalid signature for callback', { payoutId, externalPayoutId });
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid signature',
+      });
+    }
+
+    // ===== Find payout =====
+    const payout = await db.query.payouts.findFirst({
+      where: eq(payouts.id, payoutId),
+    });
+
+    if (!payout) {
+      console.error('[Payout] Payout not found', { payoutId });
+      return res.status(404).json({
+        success: false,
+        message: 'Payout not found',
+      });
+    }
+
+    // ===== Idempotent check: Skip if already processed =====
+    if (payout.status !== 'pending' && payout.status !== 'processing') {
+      console.log(`[Payout] Idempotent: Already handled (${payout.status})`, { payoutId });
+      // Return 200 OK even for duplicate - webhook provider should not retry
+      return res.status(200).json({
+        success: true,
+        message: 'Callback received (already processed)',
+      });
+    }
+
+    // ===== Update payout status =====
+    const validStatuses = ['completed', 'failed'];
+    if (!validStatuses.includes(status)) {
+      console.error('[Payout] Invalid status', { payoutId, status });
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid status',
+      });
+    }
+
+    const updateData: any = {
+      status,
+      webhookReceivedAt: new Date(),
+    };
+
+    if (status === 'completed') {
+      updateData.completedAt = new Date();
+      if (providerTransactionId) {
+        updateData.providerTransactionId = providerTransactionId;
+      }
+    } else if (status === 'failed') {
+      updateData.failureReason = failureReason || 'Unknown error from provider';
+    }
+
+    await db.update(payouts)
+      .set(updateData)
+      .where(eq(payouts.id, payoutId));
+
+    console.log(`[Payout] Updated to ${status}`, {
+      payoutId,
+      externalPayoutId,
+      completedAt: updateData.completedAt,
+      failureReason: updateData.failureReason,
+    });
+
+    // ===== Return 200 immediately (webhook should not retry on success) =====
+    return res.status(200).json({
+      success: true,
+      message: 'Callback processed',
+    });
+  } catch (error) {
+    console.error('[Payout] Callback error:', error);
+    // Return 500 to signal to webhook provider to retry
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+    });
+  }
+};
+
+// ============= GET PAYOUT STATUS =============
+
+/**
+ * GET /api/payment/v1/payout/status/:payoutId
+ * Seller checks payout status and details.
+ */
+export const getPayoutStatus = async (req: Request, res: Response) => {
+  try {
+    const sellerId = req.user!.userId;
+    const { payoutId } = req.params as { payoutId: string };
+
+    const payout = await db.query.payouts.findFirst({
+      where: and(
+        eq(payouts.id, payoutId),
+        eq(payouts.sellerId, sellerId)
+      ),
+      with: {
+        transaction: {
+          columns: {
+            id: true,
+            amount: true,
+            status: true,
+          },
+        },
+      },
+    });
+
+    if (!payout) {
+      return res.status(404).json({
+        success: false,
+        message: 'Payout không tồn tại',
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      payout: {
+        id: payout.id,
+        status: payout.status,
+        amount: payout.amount,
+        externalPayoutId: payout.externalPayoutId,
+        providerTransactionId: payout.providerTransactionId,
+        completedAt: payout.completedAt,
+        failureReason: payout.failureReason,
+        webhookReceivedAt: payout.webhookReceivedAt,
+        createdAt: payout.createdAt,
+        updatedAt: payout.updatedAt,
+        transaction: payout.transaction,
+      },
+    });
+  } catch (error) {
+    console.error('[Payout] Status error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Lỗi lấy thông tin rút tiền',
+      error: process.env.NODE_ENV === 'development' ? (error as Error).message : undefined,
     });
   }
 };

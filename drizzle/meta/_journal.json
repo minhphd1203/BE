@@ -113,6 +113,41 @@
       "when": 1774454195701,
       "tag": "0015_transaction_fulfillment",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1775559692235,
+      "tag": "0016_split_delivery_table",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1775575056753,
+      "tag": "0017_thankful_pixie",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1775575056754,
+      "tag": "0018_cleanup_delivery_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1775575056755,
+      "tag": "0019_cleanup_transaction_delivery_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1775575056756,
+      "tag": "0020_add_delivery_id_to_transactions",
+      "breakpoints": true
     }
   ]
 }

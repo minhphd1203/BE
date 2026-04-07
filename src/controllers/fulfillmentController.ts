@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { db } from '../db';
-import { bikes, transactions } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import { bikes, transactions, deliveries } from '../db/schema';
+import { eq, and } from 'drizzle-orm';
 import { updateDeliveryStatusSchema } from '../validators/transactionValidator';
 import type { DeliveryStatus } from '../constants/fulfillment';
 import { applyDeliveryPatchToSaleGroup, confirmReceiptForSaleGroup } from '../services/fulfillmentSync';
@@ -9,52 +9,23 @@ import { withShippingAddressAlias } from '../utils/transactionResponse';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function assertDeliveryTransition(
-  current: string | null | undefined,
-  next: DeliveryStatus,
-  bikeStatus: string
-): { ok: true } | { ok: false; message: string } {
-  if (bikeStatus !== 'sold') {
-    return {
-      ok: false,
-      message: 'Chỉ khi xe ở trạng thái sold (đã thanh toán đủ) mới được cập nhật giao hàng.',
-    };
-  }
-  if (next === 'preparing') {
-    if (current !== null && current !== undefined && current !== 'preparing') {
-      return { ok: false, message: 'Không thể đặt lại preparing khi đã chuyển bước sau.' };
-    }
-    return { ok: true };
-  }
-  if (current === null || current === undefined) {
-    return {
-      ok: false,
-      message: 'Đơn chưa vào luồng giao hàng. Chờ thanh toán đủ hoặc liên hệ hỗ trợ (delivery_status trống).',
-    };
-  }
-  if (current === next) {
-    return { ok: true };
-  }
-  if (next === 'delivering' && current !== 'preparing') {
-    return { ok: false, message: 'Chỉ chuyển delivering từ preparing.' };
-  }
-  if (next === 'delivered' && current !== 'delivering') {
-    return { ok: false, message: 'Chỉ chuyển delivered từ delivering.' };
-  }
-  if (next === 'preparing') {
-    return { ok: false, message: 'Không thể quay lại preparing.' };
-  }
-  return { ok: true };
+// Helper: Fetch transaction with explicit columns
+function selectValidTransactionColumns() {
+  return db.select().from(transactions);
 }
 
 /**
  * PATCH /api/fulfillment/v1/transactions/:id/delivery
- * Seller: chuyển preparing → delivering → delivered (đồng bộ mọi transaction cùng đơn bán).
+ * Seller workflow:
+ * 1. Create delivery with 'preparing' status (if none exists)
+ * 2. Update delivery from 'preparing' → 'delivering'
+ * 3. Buyer confirms receipt (separate endpoint)
  */
 export const updateDeliveryStatus = async (req: Request, res: Response) => {
   try {
     const sellerId = req.user!.userId;
     const id = req.params.id as string;
+
     if (!UUID_REGEX.test(id)) {
       return res.status(400).json({ success: false, message: 'ID giao dịch không hợp lệ' });
     }
@@ -69,59 +40,153 @@ export const updateDeliveryStatus = async (req: Request, res: Response) => {
     }
     const { status: nextStatus, deliveryNotes } = parsed.data;
 
-    const [row] = await db.select().from(transactions).where(eq(transactions.id, id)).limit(1);
-    if (!row) {
+    // ===== STEP 1: Fetch and validate transaction =====
+    const [txn] = await selectValidTransactionColumns().where(eq(transactions.id, id)).limit(1);
+    if (!txn) {
       return res.status(404).json({ success: false, message: 'Không tìm thấy giao dịch' });
     }
-    if (row.sellerId !== sellerId) {
+
+    // Authorization: only seller of this transaction
+    if (txn.sellerId !== sellerId) {
       return res.status(403).json({ success: false, message: 'Bạn không phải seller của đơn này' });
     }
-    if (row.status !== 'completed') {
+
+    // Transaction must be completed
+    if (txn.status !== 'completed') {
       return res.status(400).json({
         success: false,
-        message: `Chỉ giao dịch đã thanh toán xong (completed) mới có giao hàng. Hiện tại: ${row.status}`,
+        message: `Chỉ giao dịch đã thanh toán xong (completed) mới có giao hàng. Hiện tại: ${txn.status}`,
       });
     }
 
-    const [bike] = await db.select().from(bikes).where(eq(bikes.id, row.bikeId)).limit(1);
+    // ===== STEP 2: Verify bike is sold =====
+    const [bike] = await db.select().from(bikes).where(eq(bikes.id, txn.bikeId)).limit(1);
     if (!bike) {
       return res.status(404).json({ success: false, message: 'Không tìm thấy xe' });
     }
-
-    const check = assertDeliveryTransition(row.deliveryStatus, nextStatus, bike.status);
-    if (!check.ok) {
-      return res.status(400).json({ success: false, message: check.message });
-    }
-
-    if (row.receiptConfirmedAt) {
+    if (bike.status !== 'sold') {
       return res.status(400).json({
         success: false,
-        message: 'Người mua đã xác nhận nhận hàng — không đổi trạng thái giao hàng.',
+        message: 'Chỉ khi xe ở trạng thái sold (đã thanh toán đủ) mới được cập nhật giao hàng.',
       });
     }
 
-    const now = new Date();
-    const deliveredAtToSet =
-      nextStatus !== 'delivered' ? null : (row.deliveredAt ?? now);
+    // ===== STEP 3: Fetch current delivery (if exists) =====
+    let delivery = null;
+    if (txn.deliveryId) {
+      const [delRow] = await db.select().from(deliveries).where(eq(deliveries.id, txn.deliveryId)).limit(1);
+      delivery = delRow;
+    }
 
-    await applyDeliveryPatchToSaleGroup({
-      bikeId: row.bikeId,
-      buyerId: row.buyerId,
-      sellerId: row.sellerId,
-      deliveryStatus: nextStatus,
-      deliveryNotes: deliveryNotes !== undefined ? deliveryNotes : undefined,
-      deliveredAt: deliveredAtToSet,
-      deliveryUpdatedAt: now,
+    // ===== STEP 4: Handle 'preparing' status =====
+    if (nextStatus === 'preparing') {
+      // Can only CREATE new delivery with 'preparing', not update existing
+      if (delivery) {
+        return res.status(400).json({
+          success: false,
+          message: `Delivery record đã tồn tại với trạng thái "${delivery.deliveryStatus}". Không thể reset lại "preparing".`,
+        });
+      }
+
+      // Create new delivery record
+      const inserted = await db
+        .insert(deliveries)
+        .values({
+          deliveryStatus: 'preparing',
+          deliveryNotes: deliveryNotes?.trim() || null,
+        })
+        .returning();
+
+      if (!inserted || inserted.length === 0 || !inserted[0]?.id) {
+        console.error('[updateDeliveryStatus] Insert failed:', inserted);
+        return res.status(500).json({
+          success: false,
+          message: 'Lỗi khi tạo delivery record',
+        });
+      }
+
+      const newDelId = inserted[0].id;
+
+      // Link ALL transactions in this sale group to the NEW delivery
+      await db
+        .update(transactions)
+        .set({ deliveryId: newDelId })
+        .where(
+          and(
+            eq(transactions.bikeId, txn.bikeId),
+            eq(transactions.buyerId, txn.buyerId),
+            eq(transactions.sellerId, txn.sellerId),
+            eq(transactions.status, 'completed')
+          )
+        );
+
+      const updated = await selectValidTransactionColumns().where(eq(transactions.id, id)).limit(1);
+      return res.status(200).json({
+        success: true,
+        data: withShippingAddressAlias(updated![0]),
+        message: 'Đã tạo delivery record với trạng thái "preparing".',
+      });
+    }
+
+    // ===== STEP 5: Handle 'delivering' status =====
+    if (nextStatus === 'delivering') {
+      // Delivery must already exist
+      if (!delivery) {
+        return res.status(400).json({
+          success: false,
+          message: 'Delivery chưa được tạo. Hãy set thành "preparing" trước.',
+        });
+      }
+
+      // Must be in 'preparing' state to transition to 'delivering'
+      if (delivery.deliveryStatus !== 'preparing') {
+        return res.status(400).json({
+          success: false,
+          message: `Chỉ chuyển "delivering" từ "preparing". Trạng thái hiện tại: ${delivery.deliveryStatus}`,
+        });
+      }
+
+      // Cannot update if buyer already confirmed receipt
+      if (delivery.receiptConfirmedAt) {
+        return res.status(400).json({
+          success: false,
+          message: 'Người mua đã xác nhận nhận hàng — không thể đổi trạng thái.',
+        });
+      }
+
+      // Update the delivery record
+      await db
+        .update(deliveries)
+        .set({
+          deliveryStatus: 'delivering',
+          deliveryNotes: deliveryNotes !== undefined ? deliveryNotes : undefined,
+        })
+        .where(eq(deliveries.id, delivery.id));
+
+      const updated = await selectValidTransactionColumns().where(eq(transactions.id, id)).limit(1);
+      return res.status(200).json({
+        success: true,
+        data: withShippingAddressAlias(updated![0]),
+        message: 'Đã cập nhật trạng thái giao hàng thành "delivering".',
+      });
+    }
+
+    // ===== STEP 6: Reject 'delivered' (buyer-only) =====
+    if (nextStatus === 'delivered') {
+      return res.status(400).json({
+        success: false,
+        message: 'Seller không thể đặt "delivered". Chỉ buyer xác nhận nhận hàng. (Sử dụng endpoint confirm-receipt)',
+      });
+    }
+
+    // ===== STEP 7: Unknown status =====
+    return res.status(400).json({
+      success: false,
+      message: `Trạng thái không hợp lệ: ${nextStatus}. Cho phép: preparing, delivering`,
     });
 
-    const [updated] = await db.select().from(transactions).where(eq(transactions.id, id)).limit(1);
-
-    return res.status(200).json({
-      success: true,
-      data: withShippingAddressAlias(updated!),
-      message: 'Đã cập nhật trạng thái giao hàng (đồng bộ toàn bộ giao dịch liên quan).',
-    });
   } catch (error) {
+    console.error('[updateDeliveryStatus] Error:', error instanceof Error ? error.message : String(error), error instanceof Error ? error.stack : '');
     return res.status(500).json({
       success: false,
       message: 'Lỗi khi cập nhật giao hàng',
@@ -132,7 +197,7 @@ export const updateDeliveryStatus = async (req: Request, res: Response) => {
 
 /**
  * POST /api/fulfillment/v1/transactions/:id/confirm-receipt
- * Buyer: xác nhận đã nhận hàng sau delivered.
+ * Buyer: xác nhận đã nhận hàng sau delivering (changes status to delivered).
  */
 export const confirmReceipt = async (req: Request, res: Response) => {
   try {
@@ -142,32 +207,43 @@ export const confirmReceipt = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'ID giao dịch không hợp lệ' });
     }
 
-    const [row] = await db.select().from(transactions).where(eq(transactions.id, id)).limit(1);
+    const row = await selectValidTransactionColumns().where(eq(transactions.id, id)).limit(1);
     if (!row) {
       return res.status(404).json({ success: false, message: 'Không tìm thấy giao dịch' });
     }
-    if (row.buyerId !== buyerId) {
+    if (row[0].buyerId !== buyerId) {
       return res.status(403).json({ success: false, message: 'Đơn không thuộc tài khoản của bạn' });
     }
-    if (row.status !== 'completed') {
+    if (row[0].status !== 'completed') {
       return res.status(400).json({ success: false, message: 'Giao dịch chưa hoàn tất thanh toán.' });
     }
-    if (row.deliveryStatus !== 'delivered') {
+
+    // Get delivery record
+    let delivery = null;
+    if (row[0].deliveryId) {
+      const [delRow] = await db.select().from(deliveries).where(eq(deliveries.id, row[0].deliveryId)).limit(1);
+      delivery = delRow;
+    }
+
+    if (delivery?.deliveryStatus !== 'delivering') {
       return res.status(400).json({
         success: false,
-        message: 'Seller phải đánh dấu delivered trước khi bạn xác nhận nhận hàng.',
+        message: 'Seller phải đánh dấu "delivering" trước khi bạn xác nhận nhận hàng.',
       });
     }
-    if (row.receiptConfirmedAt) {
-      const [again] = await db.select().from(transactions).where(eq(transactions.id, id)).limit(1);
+    
+    if (delivery?.receiptConfirmedAt) {
+      const again = await selectValidTransactionColumns().where(eq(transactions.id, id)).limit(1);
       return res.status(200).json({
         success: true,
-        data: withShippingAddressAlias(again!),
+        data: withShippingAddressAlias(again![0]),
         message: 'Đơn đã được xác nhận nhận hàng trước đó.',
       });
     }
 
-    const n = await confirmReceiptForSaleGroup(row.bikeId, row.buyerId, row.sellerId);
+    // Buyer confirms → change status to 'delivered' + set receiptConfirmedAt
+    const now = new Date();
+    const n = await confirmReceiptForSaleGroup(row[0].bikeId, row[0].buyerId, row[0].sellerId, now);
     if (n === 0) {
       return res.status(400).json({
         success: false,
@@ -175,11 +251,11 @@ export const confirmReceipt = async (req: Request, res: Response) => {
       });
     }
 
-    const [updated] = await db.select().from(transactions).where(eq(transactions.id, id)).limit(1);
+    const updated = await selectValidTransactionColumns().where(eq(transactions.id, id)).limit(1);
     return res.status(200).json({
       success: true,
-      data: withShippingAddressAlias(updated!),
-      message: 'Đã xác nhận nhận hàng.',
+      data: withShippingAddressAlias(updated![0]),
+      message: 'Đã xác nhận nhận hàng. Trạng thái cập nhật thành "delivered".',
     });
   } catch (error) {
     return res.status(500).json({
@@ -206,20 +282,20 @@ export const getFulfillmentDetail = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: 'ID giao dịch không hợp lệ' });
     }
 
-    const [row] = await db.select().from(transactions).where(eq(transactions.id, id)).limit(1);
-    if (!row) {
+    const row = await selectValidTransactionColumns().where(eq(transactions.id, id)).limit(1);
+    if (!row || row.length === 0) {
       return res.status(404).json({ success: false, message: 'Không tìm thấy giao dịch' });
     }
-    if (role === 'buyer' && row.buyerId !== uid) {
+    if (role === 'buyer' && row[0].buyerId !== uid) {
       return res.status(403).json({ success: false, message: 'Forbidden' });
     }
-    if (role === 'seller' && row.sellerId !== uid) {
+    if (role === 'seller' && row[0].sellerId !== uid) {
       return res.status(403).json({ success: false, message: 'Forbidden' });
     }
 
     return res.status(200).json({
       success: true,
-      data: withShippingAddressAlias(row),
+      data: withShippingAddressAlias(row![0]),
       message: 'Chi tiết đơn / giao hàng',
     });
   } catch (error) {

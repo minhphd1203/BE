@@ -1,5 +1,5 @@
 import express from 'express';
-import { createPaymentUrl, createRemainingPaymentUrl, vnpayReturn, vnpayIPN, getPaymentStatus } from '../controllers/paymentController';
+import { createPaymentUrl, createRemainingPaymentUrl, vnpayReturn, vnpayIPN, getPaymentStatus, createPayout, getPayoutStatus, handlePayoutCallback } from '../controllers/paymentController';
 import { isAuthenticated } from '../middleware/authMiddleware';
 
 const router = express.Router();
@@ -265,5 +265,223 @@ router.get('/v1/status/:transactionId', isAuthenticated, getPaymentStatus);
  *         description: Unauthorized
  */
 router.post('/v1/create-remaining/:transactionId', isAuthenticated, createRemainingPaymentUrl);
+
+// ============= SELLER PAYOUT ENDPOINTS =============
+
+/**
+ * @swagger
+ * /api/payment/v1/payout/create/{transactionId}:
+ *   post:
+ *     summary: Seller initiates payout after delivery confirmed
+ *     description: |
+ *       Seller initiates payout after delivery is confirmed.
+ *       - Validates delivery status and seller bank account info
+ *       - Creates payout record (status: pending)
+ *       - Simulates async processing (90% success rate)
+ *       - Updates status to completed/failed
+ *
+ *       **Prerequisites:**
+ *       1. Delivery must be confirmed (deliveryStatus='delivered')
+ *       2. Buyer must have confirmed receipt (receiptConfirmedAt set)
+ *       3. Seller must have valid bank account info (bankCode, bankAccountNumber, bankAccountHolder)
+ *     tags: [Payment - Seller Payout]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: transactionId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: ID of a completed transaction with confirmed delivery
+ *     responses:
+ *       201:
+ *         description: Payout request created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                 payout:
+ *                   type: object
+ *                   properties:
+ *                     id:
+ *                       type: string
+ *                       format: uuid
+ *                     status:
+ *                       type: string
+ *                       enum: [pending, completed, failed]
+ *                     amount:
+ *                       type: number
+ *                     externalPayoutId:
+ *                       type: string
+ *                     createdAt:
+ *                       type: string
+ *                       format: date-time
+ *       400:
+ *         description: |
+ *           Invalid request:
+ *           - Delivery not confirmed (deliveryStatus != 'delivered')
+ *           - Receipt not confirmed (receiptConfirmedAt not set)
+ *           - Transaction not completed
+ *           - Bank info missing
+ *           - Payout already exists
+ *       404:
+ *         description: Transaction not found or does not belong to seller
+ *       401:
+ *         description: Unauthorized
+ */
+router.post('/v1/payout/create/:transactionId', isAuthenticated, createPayout);
+
+/**
+ * @swagger
+ * /api/payment/v1/payout/status/{payoutId}:
+ *   get:
+ *     summary: Get payout status
+ *     description: |
+ *       Seller checks payout status and details.
+ *       Returns current status: pending, completed, or failed.
+ *     tags: [Payment - Seller Payout]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: payoutId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: Payout status retrieved
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 payout:
+ *                   type: object
+ *                   properties:
+ *                     id:
+ *                       type: string
+ *                     status:
+ *                       type: string
+ *                       enum: [pending, completed, failed]
+ *                     amount:
+ *                       type: number
+ *                     externalPayoutId:
+ *                       type: string
+ *                     providerTransactionId:
+ *                       type: string
+ *                     completedAt:
+ *                       type: string
+ *                       format: date-time
+ *                     failureReason:
+ *                       type: string
+ *                     createdAt:
+ *                       type: string
+ *                       format: date-time
+ *       404:
+ *         description: Payout not found or does not belong to seller
+ *       401:
+ *         description: Unauthorized
+ */
+router.get('/v1/payout/status/:payoutId', isAuthenticated, getPayoutStatus);
+
+/**
+ * @swagger
+ * /api/payment/v1/payout-callback:
+ *   post:
+ *     summary: Payout provider webhook callback
+ *     description: |
+ *       Webhook callback from payout provider (mock, STP, or PayOO).
+ *       Called by provider after transfer processing completes.
+ *       
+ *       **No authentication required:** Provider calls server-to-server.
+ *       
+ *       **Security:** HMAC-SHA256 signature verification.
+ *
+ *       **Flow:**
+ *       1. Provider processes transfer (2-7s in mock mode)
+ *       2. Provider sends callback to this endpoint
+ *       3. Signature verified
+ *       4. Payout status updated (completed/failed)
+ *       5. Backend returns 200 OK immediately
+ *       6. Provider will NOT retry if HTTP 200 received
+ *
+ *       **Idempotent:** Duplicate callbacks are skipped (safe for retries).
+ *     tags: [Payment - Seller Payout]
+ *     parameters:
+ *       - in: query
+ *         name: source
+ *         schema:
+ *           type: string
+ *           enum: [mock, stp, payoo]
+ *         description: Payout provider type (for logging)
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [payoutId, externalPayoutId, status, signature]
+ *             properties:
+ *               payoutId:
+ *                 type: string
+ *                 format: uuid
+ *                 description: Internal payout ID from backend
+ *               externalPayoutId:
+ *                 type: string
+ *                 description: External transaction ID from provider
+ *               status:
+ *                 type: string
+ *                 enum: [completed, failed]
+ *                 description: Transfer status
+ *               providerTransactionId:
+ *                 type: string
+ *                 description: Provider transaction reference (for completed)
+ *               failureReason:
+ *                 type: string
+ *                 description: Failure details (for failed)
+ *               signature:
+ *                 type: string
+ *                 description: HMAC-SHA256 signature for verification
+ *           example:
+ *             payoutId: "550e8400-e29b-41d4-a716-446655440000"
+ *             externalPayoutId: "EXT-2026-03-24-12345"
+ *             status: "completed"
+ *             providerTransactionId: "STP-2026-03-24-12345"
+ *             signature: "a7b8c9d0e1f2g3h4i5j6k7l8m9n0o1p2q3r4s5t6u7v8w9x0y1z2"
+ *     responses:
+ *       200:
+ *         description: Callback processed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *       400:
+ *         description: Invalid status value
+ *       401:
+ *         description: Invalid signature
+ *       404:
+ *         description: Payout not found
+ *       500:
+ *         description: Internal error (provider will retry)
+ */
+router.post('/v1/payout-callback', handlePayoutCallback);
 
 export default router;
