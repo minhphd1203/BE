@@ -1,7 +1,7 @@
 import { db } from '../src/db';
-import { bikes, users, categories } from '../src/db/schema';
+import { bikes, users, categories, brands, models } from '../src/db/schema';
 import { eq } from 'drizzle-orm';
-import dotenv from 'dotenv';
+import * as dotenv from 'dotenv';
 
 dotenv.config();
 
@@ -145,19 +145,82 @@ async function seedBikes() {
       },
     ];
 
+    // Get or create brands and models
+    console.log('\n📦 Kiểm tra/tạo brands và models...');
+    const brandMap = new Map<string, string>();
+    const modelMap = new Map<string, string>();
+    
+    // Collect unique brands from bike data
+    const uniqueBrands = Array.from(new Set(bikeData.map(b => b.brand)));
+    
+    for (const brandName of uniqueBrands) {
+      let brandRecord = await db.query.brands.findFirst({
+        where: (b, { eq }) => eq(b.name, brandName)
+      });
+      
+      if (!brandRecord) {
+        const [newBrand] = await db.insert(brands).values({
+          name: brandName,
+          description: `Brand: ${brandName}`
+        }).returning();
+        brandRecord = newBrand;
+      }
+      
+      brandMap.set(brandName, brandRecord.id);
+    }
+    
+    console.log(`✓ Brands ready: ${brandMap.size} brands`);
+    
+    // Process bikes and resolve brand/model IDs
+    const processedBikes = [];
+    for (const bike of bikeData) {
+      const brandId = brandMap.get(bike.brand)!;
+      const modelKey = `${bike.brand}_${bike.model}`;
+      let modelId = modelMap.get(modelKey);
+      
+      if (!modelId) {
+        let existingModel = await db.query.models.findFirst({
+          where: (m, { eq, and }) => and(
+            eq(m.brandId, brandId),
+            eq(m.name, bike.model)
+          )
+        });
+        
+        if (!existingModel) {
+          const [newModel] = await db.insert(models).values({
+            brandId,
+            name: bike.model,
+            description: `Model: ${bike.model}`
+          }).returning();
+          existingModel = newModel;
+        }
+        
+        modelId = existingModel.id;
+        modelMap.set(modelKey, modelId);
+      }
+      
+      processedBikes.push({
+        title: bike.title,
+        description: bike.description,
+        brandId,
+        modelId,
+        year: bike.year,
+        price: bike.price,
+        condition: bike.condition,
+        mileage: bike.mileage,
+        color: bike.color,
+        sellerId: seller.id,
+        categoryId,
+        status: 'approved',
+        isVerified: 'verified',
+        inspectionStatus: 'completed',
+        images: [`https://via.placeholder.com/600x400?text=${bike.brand}`],
+      });
+    }
+
     const insertedBikes = await db
       .insert(bikes)
-      .values(
-        bikeData.map((bike) => ({
-          ...bike,
-          sellerId: seller.id,
-          categoryId,
-          status: 'approved',
-          isVerified: 'verified', // Pass inspection
-          inspectionStatus: 'completed',
-          images: ['https://via.placeholder.com/600x400?text=' + bike.brand],
-        }))
-      )
+      .values(processedBikes)
       .returning();
 
     console.log(`\n✅ Successfully seeded ${insertedBikes.length} bikes!\n`);
@@ -165,7 +228,7 @@ async function seedBikes() {
     // Show summary
     insertedBikes.forEach((bike, index) => {
       console.log(`${index + 1}. ${bike.title}`);
-      console.log(`   Brand: ${bike.brand} | Model: ${bike.model} | Price: ${bike.price.toLocaleString('vi-VN')} ₫`);
+      console.log(`   Price: ${bike.price.toLocaleString('vi-VN')} ₫`);
       console.log(`   Status: ${bike.status} | Verified: ${bike.isVerified} | Inspection: ${bike.inspectionStatus}`);
       console.log(`   ID: ${bike.id}\n`);
     });

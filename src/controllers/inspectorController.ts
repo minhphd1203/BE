@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { db } from '../db';
 import { bikes, inspections, users, categories, messages } from '../db/schema';
-import { eq, desc, and, or, sql } from 'drizzle-orm';
+import { eq, desc, asc, and, or, sql } from 'drizzle-orm';
 import { InspectionFormData, ApiResponse } from '../models';
 import {
   mergeInspectionProofUrls,
@@ -184,73 +184,74 @@ export const getPendingBikes = async (req: Request, res: Response) => {
   try {
     const { search, sort } = req.query;
 
-    let query = db
-      .select({
-        id: bikes.id,
-        title: bikes.title,
-        brand: bikes.brand,
-        model: bikes.model,
-        year: bikes.year,
-        price: bikes.price,
-        condition: bikes.condition,
-        images: bikes.images,
-        video: bikes.video,
-        status: bikes.status,
-        isVerified: bikes.isVerified,
-        inspectionStatus: bikes.inspectionStatus,
-        sellerId: bikes.sellerId,
-        sellerName: users.name,
-        categoryName: categories.name,
-        createdAt: bikes.createdAt,
-      })
-      .from(bikes)
-      .leftJoin(users, eq(bikes.sellerId, users.id))
-      .leftJoin(categories, eq(bikes.categoryId, categories.id))
-      .$dynamic();
-
-    // Inspector inspects BEFORE admin approval: both pending and rejected (resubmitted) bikes
-    // - 'pending' status: new bikes awaiting first inspection
-    // - 'rejected' status with 'pending' inspectionStatus: resubmitted bikes (seller edited after rejection)
-    const conditions = [
-      or(
-        eq(bikes.status, 'pending'),    // New bikes awaiting inspection
-        eq(bikes.status, 'rejected')    // Resubmitted bikes (seller edited after rejection)
+    const pendingBikes = await db.query.bikes.findMany({
+      where: and(
+        or(
+          eq(bikes.status, 'pending'),
+          eq(bikes.status, 'rejected')
+        ),
+        or(
+          eq(bikes.inspectionStatus, 'pending'),
+          eq(bikes.inspectionStatus, 'in_progress')
+        )
       ),
-      sql`${bikes.inspectionStatus} IN ('pending', 'in_progress')`
-    ];
+      columns: {
+        id: true,
+        title: true,
+        description: true,
+        year: true,
+        price: true,
+        condition: true,
+        mileage: true,
+        color: true,
+        images: true,
+        video: true,
+        status: true,
+        isVerified: true,
+        inspectionStatus: true,
+        sellerId: true,
+        categoryId: true,
+        createdAt: true,
+      },
+      with: {
+        seller: {
+          columns: { id: true, name: true, avatar: true, phone: true },
+        },
+        brand: {
+          columns: { id: true, name: true },
+        },
+        model: {
+          columns: { id: true, name: true },
+        },
+        category: {
+          columns: { id: true, name: true },
+        },
+      },
+      orderBy: sort === 'oldest'
+        ? asc(bikes.createdAt)
+        : sort === 'price_asc'
+          ? asc(bikes.price)
+          : sort === 'price_desc'
+            ? desc(bikes.price)
+            : desc(bikes.createdAt),
+    });
 
-    // Search filter
+    // Apply search filter on the results
+    let filtered = pendingBikes;
     if (search && typeof search === 'string') {
-      conditions.push(
-        sql`(
-          LOWER(${bikes.title}) LIKE LOWER(${'%' + search + '%'}) OR
-          LOWER(${bikes.brand}) LIKE LOWER(${'%' + search + '%'}) OR
-          LOWER(${bikes.model}) LIKE LOWER(${'%' + search + '%'}) OR
-          LOWER(${users.name}) LIKE LOWER(${'%' + search + '%'})
-        )`
+      const searchLower = (search as string).toLowerCase();
+      filtered = pendingBikes.filter(bike =>
+        bike.title.toLowerCase().includes(searchLower) ||
+        bike.brand?.name.toLowerCase().includes(searchLower) ||
+        bike.model?.name.toLowerCase().includes(searchLower) ||
+        bike.seller?.name.toLowerCase().includes(searchLower)
       );
     }
 
-    query = query.where(and(...conditions));
-
-    // Sorting
-    if (sort === 'oldest') {
-      query = query.orderBy(bikes.createdAt);
-    } else if (sort === 'price_asc') {
-      query = query.orderBy(bikes.price);
-    } else if (sort === 'price_desc') {
-      query = query.orderBy(desc(bikes.price));
-    } else {
-      // Default: newest first
-      query = query.orderBy(desc(bikes.createdAt));
-    }
-
-    const pendingBikes = await query;
-
     res.json({
       success: true,
-      data: pendingBikes,
-      message: `Found ${pendingBikes.length} bikes pending inspection`,
+      data: filtered,
+      message: `Found ${filtered.length} bikes pending inspection`,
     });
   } catch (error) {
     console.error('Get pending bikes error:', error);
@@ -266,34 +267,55 @@ export const getBikeDetail = async (req: Request, res: Response) => {
   try {
     const bikeId = req.params.bikeId as string;
 
-    const [bikeDetail] = await db
-      .select({
-        id: bikes.id,
-        title: bikes.title,
-        description: bikes.description,
-        brand: bikes.brand,
-        model: bikes.model,
-        year: bikes.year,
-        price: bikes.price,
-        condition: bikes.condition,
-        mileage: bikes.mileage,
-        color: bikes.color,
-        images: bikes.images,
-        video: bikes.video,
-        status: bikes.status,
-        isVerified: bikes.isVerified,
-        inspectionStatus: bikes.inspectionStatus,
-        sellerId: bikes.sellerId,
-        sellerName: users.name,
-        sellerPhone: users.phone,
-        sellerEmail: users.email,
-        categoryName: categories.name,
-        createdAt: bikes.createdAt,
-      })
-      .from(bikes)
-      .leftJoin(users, eq(bikes.sellerId, users.id))
-      .leftJoin(categories, eq(bikes.categoryId, categories.id))
-      .where(eq(bikes.id, bikeId as string));
+    const bikeDetail = await db.query.bikes.findFirst({
+      where: eq(bikes.id, bikeId as string),
+      columns: {
+        id: true,
+        title: true,
+        description: true,
+        year: true,
+        price: true,
+        condition: true,
+        mileage: true,
+        color: true,
+        images: true,
+        video: true,
+        status: true,
+        isVerified: true,
+        inspectionStatus: true,
+        sellerId: true,
+        categoryId: true,
+        createdAt: true,
+      },
+      with: {
+        seller: {
+          columns: {
+            id: true,
+            name: true,
+            phone: true,
+            email: true,
+          },
+        },
+        category: {
+          columns: {
+            id: true,
+            name: true,
+          },
+        },
+        brand: {
+          columns: {
+            id: true,
+            name: true,
+          },
+        },
+        model: {
+          columns: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
 
     if (!bikeDetail) {
       return res.status(404).json({
@@ -583,56 +605,73 @@ export const getMyInspections = async (req: Request, res: Response) => {
     const inspectorId = req.user?.userId;
     const { search, sort, status } = req.query;
 
-    let query = db
-      .select({
-        inspection: inspections,
-        bikeTitle: bikes.title,
-        bikeBrand: bikes.brand,
-        bikeModel: bikes.model,
-        bikePrice: bikes.price,
-        bikeCondition: bikes.condition,
-        bikeImages: bikes.images,
-        sellerName: users.name,
-      })
-      .from(inspections)
-      .leftJoin(bikes, eq(inspections.bikeId, bikes.id))
-      .leftJoin(users, eq(bikes.sellerId, users.id))
-      .$dynamic();
-
-    // Base condition
-    const conditions = [eq(inspections.inspectorId, inspectorId!)];
-
-    // Search filter
-    if (search && typeof search === 'string') {
-      conditions.push(
-        sql`(
-          LOWER(${bikes.title}) LIKE LOWER(${'%' + search + '%'}) OR
-          LOWER(${bikes.brand}) LIKE LOWER(${'%' + search + '%'}) OR
-          LOWER(${users.name}) LIKE LOWER(${'%' + search + '%'})
-        )`
-      );
-    }
+    let conditions = [eq(inspections.inspectorId, inspectorId!)];
 
     // Status filter (passed/failed)
     if (status && (status === 'passed' || status === 'failed')) {
       conditions.push(eq(inspections.status, status));
     }
 
-    query = query.where(and(...conditions));
+    const inspectionResults = await db.query.inspections.findMany({
+      where: and(...conditions),
+      with: {
+        bike: {
+          columns: {
+            id: true,
+            title: true,
+            price: true,
+            condition: true,
+            images: true,
+            sellerId: true,
+          },
+          with: {
+            brand: { columns: { id: true, name: true } },
+            model: { columns: { id: true, name: true } },
+            seller: {
+              columns: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+        inspector: {
+          columns: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+      },
+      orderBy: sort === 'oldest' 
+        ? inspections.createdAt 
+        : sort === 'price_asc' 
+          ? inspections.bikeId 
+          : desc(inspections.createdAt),
+    });
 
-    // Sorting
-    if (sort === 'oldest') {
-      query = query.orderBy(inspections.createdAt);
-    } else if (sort === 'price_asc') {
-      query = query.orderBy(bikes.price);
-    } else if (sort === 'price_desc') {
-      query = query.orderBy(desc(bikes.price));
-    } else {
-      // Default: newest first
-      query = query.orderBy(desc(inspections.createdAt));
+    // Apply search filter on the results (since we can't filter on related table's columns in ORM easily)
+    let filtered = inspectionResults;
+    if (search && typeof search === 'string') {
+      const searchLower = (search as string).toLowerCase();
+      filtered = inspectionResults.filter(item => 
+        item.bike?.title.toLowerCase().includes(searchLower) ||
+        item.bike?.brand?.name.toLowerCase().includes(searchLower) ||
+        item.bike?.seller?.name.toLowerCase().includes(searchLower)
+      );
     }
 
-    const myInspections = await query;
+    // Map to response format
+    const myInspections = filtered.map(item => ({
+      inspection: item,
+      bikeTitle: item.bike?.title,
+      bikeBrand: item.bike?.brand?.name,
+      bikeModel: item.bike?.model?.name,
+      bikePrice: item.bike?.price,
+      bikeCondition: item.bike?.condition,
+      bikeImages: item.bike?.images,
+      sellerName: item.bike?.seller?.name,
+    }));
 
     res.json({
       success: true,

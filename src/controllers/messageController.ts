@@ -69,7 +69,11 @@ export const getAllConversations = async (req: Request, res: Response) => {
         if (thread.bikeId) {
           bikeData = await db.query.bikes.findFirst({
             where: eq(bikes.id, thread.bikeId),
-            columns: { id: true, title: true, brand: true, model: true, images: true },
+            columns: { id: true, title: true, images: true },
+            with: {
+              brand: { columns: { id: true, name: true } },
+              model: { columns: { id: true, name: true } },
+            },
           });
         }
 

@@ -1,5 +1,5 @@
 import { db } from '../src/db';
-import { users, bikes, categories, inspections } from '../src/db/schema';
+import { users, bikes, categories, inspections, brands, models } from '../src/db/schema';
 import bcrypt from 'bcryptjs';
 import fs from 'fs';
 import path from 'path';
@@ -154,25 +154,75 @@ async function seedBikesWithInspection() {
 
     // 5. Create bikes with completed inspection status
     console.log(`🚲 Tạo ${CONFIG.NUM_BIKES} bikes với inspection status = completed...\n`);
+    
+    // Get or create brands and models
+    console.log('📦 Kiểm tra/tạo brands và models...');
+    const brandMap = new Map<string, string>(); // brand name -> brand id
+    const modelMap = new Map<string, string>(); // "brand_model" -> model id
+    
+    for (const brandName of bikeBrands) {
+      let brandRecord = await db.query.brands.findFirst({
+        where: (b, { eq }) => eq(b.name, brandName)
+      });
+      
+      if (!brandRecord) {
+        const [newBrand] = await db.insert(brands).values({
+          name: brandName,
+          description: `Brand: ${brandName}`
+        }).returning();
+        brandRecord = newBrand;
+      }
+      
+      brandMap.set(brandName, brandRecord.id);
+    }
+    
+    console.log(`✓ Brands ready: ${brandMap.size} brands\n`);
+    
     const bikeValues = [];
     for (let i = 0; i < CONFIG.NUM_BIKES; i++) {
-      const brand = random.pick(bikeBrands);
-      const model = generateBikeModel();
+      const brandName = random.pick(bikeBrands);
+      const modelName = generateBikeModel();
       const year = random.int(2018, 2024);
       const condition = random.pick(conditions);
       const city = random.pick(cities);
       const size = random.pick(sizes);
       const color = random.pick(colors);
       
+      // Get or create model for this brand
+      const brandId = brandMap.get(brandName)!;
+      const modelKey = `${brandName}_${modelName}`;
+      let modelRecord = modelMap.get(modelKey);
+      
+      if (!modelRecord) {
+        let existingModel = await db.query.models.findFirst({
+          where: (m, { eq, and }) => and(
+            eq(m.brandId, brandId),
+            eq(m.name, modelName)
+          )
+        });
+        
+        if (!existingModel) {
+          const [newModel] = await db.insert(models).values({
+            brandId,
+            name: modelName,
+            description: `Model: ${modelName}`
+          }).returning();
+          existingModel = newModel;
+        }
+        
+        modelRecord = existingModel.id;
+        modelMap.set(modelKey, modelRecord);
+      }
+      
       // Select 1-3 random images for this bike
       const numImages = random.int(1, 3);
       const bikeImages = random.picks(uploadedImages, numImages);
       
       bikeValues.push({
-        title: `${brand} ${model} ${year} - ${color}`,
-        description: generateDescription(brand, model, condition, city, size),
-        brand,
-        model,
+        title: `${brandName} ${modelName} ${year} - ${color}`,
+        description: generateDescription(brandName, modelName, condition, city, size),
+        brandId,
+        modelId: modelRecord,
         year,
         price: random.int(1, 6) * 1000000, // 1tr - 6tr
         condition,

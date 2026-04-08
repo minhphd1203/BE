@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { db } from '../db';
-import { bikes, categories, transactions, wishlists, reports, messages, reviews, users, reportReasons } from '../db/schema';
+import { bikes, brands, models, categories, transactions, wishlists, reports, messages, reviews, users, reportReasons } from '../db/schema';
 import { desc, eq, and, ilike, lte, gte, or, inArray, ne, type SQL } from 'drizzle-orm';
 import { ApiResponse } from '../models';
 import { TRANSACTION_TYPE_OPTIONS, TRANSACTION_TYPES } from '../constants/transactionTypes';
@@ -113,11 +113,25 @@ export const searchBikes = async (req: Request, res: Response) => {
       const filters: SQL[] = [];
       
       if (normalizedBrand) {
-        filters.push(ilike(bikes.brand, `%${normalizedBrand}%`));
+        // Search across brands table via join
+        const brandsWithName = await db.query.brands.findMany({
+          where: ilike(brands.name, `%${normalizedBrand}%`),
+          columns: { id: true },
+        });
+        if (brandsWithName.length > 0) {
+          filters.push(inArray(bikes.brandId, brandsWithName.map((b) => b.id)));
+        }
       }
       
       if (normalizedModel) {
-        filters.push(ilike(bikes.model, `%${normalizedModel}%`));
+        // Search across models table via join
+        const modelsWithName = await db.query.models.findMany({
+          where: ilike(models.name, `%${normalizedModel}%`),
+          columns: { id: true },
+        });
+        if (modelsWithName.length > 0) {
+          filters.push(inArray(bikes.modelId, modelsWithName.map((m) => m.id)));
+        }
       }
       
       if (normalizedTitle) {
@@ -229,21 +243,10 @@ export const searchBikes = async (req: Request, res: Response) => {
     // Fetch bikes with minimal info for list view
     const bikesData = await db.query.bikes.findMany({
       where: and(...finalFilters),
-      with: {
-        seller: {
-          columns: {
-            id: true,
-            name: true,
-            avatar: true,
-          },
-        },
-      },
       columns: {
         // Include only necessary fields for list view
         id: true,
         title: true,
-        brand: true,
-        model: true,
         price: true,
         condition: true,
         year: true,
@@ -251,6 +254,21 @@ export const searchBikes = async (req: Request, res: Response) => {
         status: true,
         isVerified: true,
         createdAt: true,
+      },
+      with: {
+        brand: {
+          columns: { id: true, name: true },
+        },
+        model: {
+          columns: { id: true, name: true },
+        },
+        seller: {
+          columns: {
+            id: true,
+            name: true,
+            avatar: true,
+          },
+        },
       },
       orderBy: [sortOrder === 'asc' ? sortField : desc(sortField)],
       limit: limitNum,
@@ -654,7 +672,11 @@ export const getMyTransactions = async (req: Request, res: Response) => {
       },
       with: {
         bike: {
-          columns: { id: true, title: true, brand: true, model: true, price: true, images: true, status: true },
+          columns: { id: true, title: true, price: true, images: true, status: true },
+          with: {
+            brand: { columns: { id: true, name: true } },
+            model: { columns: { id: true, name: true } },
+          },
         },
         seller: {
           columns: { id: true, name: true, email: true, phone: true, avatar: true },
@@ -719,8 +741,6 @@ export const getTransactionDetail = async (req: Request, res: Response) => {
           columns: {
             id: true,
             title: true,
-            brand: true,
-            model: true,
             year: true,
             price: true,
             images: true,
@@ -728,6 +748,10 @@ export const getTransactionDetail = async (req: Request, res: Response) => {
             condition: true,
             mileage: true,
             color: true,
+          },
+          with: {
+            brand: { columns: { id: true, name: true } },
+            model: { columns: { id: true, name: true } },
           },
         },
         seller: {
@@ -846,11 +870,13 @@ export const getWishlist = async (req: Request, res: Response) => {
       with: {
         bike: {
           columns: {
-            id: true, title: true, brand: true, model: true, year: true,
+            id: true, title: true, year: true,
             price: true, condition: true, images: true, status: true, isVerified: true, createdAt: true,
           },
           with: {
             seller: { columns: { id: true, name: true, avatar: true } },
+            brand: { columns: { id: true, name: true } },
+            model: { columns: { id: true, name: true } },
           },
         },
       },
@@ -998,13 +1024,15 @@ export const getSellerBikesForReport = async (req: Request, res: Response) => {
       columns: {
         id: true,
         title: true,
-        brand: true,
-        model: true,
         year: true,
         price: true,
         condition: true,
         status: true,
         createdAt: true,
+      },
+      with: {
+        brand: { columns: { id: true, name: true } },
+        model: { columns: { id: true, name: true } },
       },
       orderBy: [desc(bikes.createdAt)],
     });
@@ -1235,8 +1263,10 @@ export const getMyReports = async (req: Request, res: Response) => {
           columns: {
             id: true,
             title: true,
-            brand: true,
-            model: true,
+          },
+          with: {
+            brand: { columns: { id: true, name: true } },
+            model: { columns: { id: true, name: true } },
           },
         },
         resolver: {

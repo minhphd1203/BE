@@ -1,5 +1,5 @@
 import { db } from '../src/db';
-import { users, bikes, categories } from '../src/db/schema';
+import { users, bikes, categories, brands, models } from '../src/db/schema';
 import bcrypt from 'bcryptjs';
 
 // ========== CẤU HÌNH SỐ LƯỢNG ==========
@@ -173,21 +173,70 @@ async function seedData() {
 
     // 4. Tạo Bikes
     console.log('🚲 Tạo bikes ngẫu nhiên...');
+    
+    // Get or create brands and models
+    console.log('📦 Kiểm tra/tạo brands và models...');
+    const brandMap = new Map<string, string>();
+    const modelMap = new Map<string, string>();
+    
+    for (const brandName of bikeBrands) {
+      let brandRecord = await db.query.brands.findFirst({
+        where: (b, { eq }) => eq(b.name, brandName)
+      });
+      
+      if (!brandRecord) {
+        const [newBrand] = await db.insert(brands).values({
+          name: brandName,
+          description: `Brand: ${brandName}`
+        }).returning();
+        brandRecord = newBrand;
+      }
+      
+      brandMap.set(brandName, brandRecord.id);
+    }
+    console.log(`✓ Brands ready: ${brandMap.size} brands\n`);
+    
     const bikeValues = [];
     for (let i = 0; i < CONFIG.NUM_BIKES; i++) {
-      const brand = random.pick(bikeBrands);
-      const model = generateBikeModel();
+      const brandName = random.pick(bikeBrands);
+      const modelName = generateBikeModel();
       const year = random.int(2018, 2024);
       const condition = random.pick(conditions);
       const city = random.pick(cities);
       const size = random.pick(sizes);
       const status = 'approved'; // Tất cả bike đều được duyệt để hiển thị ngay
       
+      // Get or create model for this brand
+      const brandId = brandMap.get(brandName)!;
+      const modelKey = `${brandName}_${modelName}`;
+      let modelId = modelMap.get(modelKey);
+      
+      if (!modelId) {
+        let existingModel = await db.query.models.findFirst({
+          where: (m, { eq, and }) => and(
+            eq(m.brandId, brandId),
+            eq(m.name, modelName)
+          )
+        });
+        
+        if (!existingModel) {
+          const [newModel] = await db.insert(models).values({
+            brandId,
+            name: modelName,
+            description: `Model: ${modelName}`
+          }).returning();
+          existingModel = newModel;
+        }
+        
+        modelId = existingModel.id;
+        modelMap.set(modelKey, modelId);
+      }
+      
       bikeValues.push({
-        title: generateBikeTitle(brand, model, year),
-        description: generateDescription(brand, model, condition, city, size),
-        brand,
-        model,
+        title: generateBikeTitle(brandName, modelName, year),
+        description: generateDescription(brandName, modelName, condition, city, size),
+        brandId,
+        modelId,
         year,
         price: random.int(5, 100) * 1000000, // 5tr - 100tr
         condition,

@@ -84,7 +84,13 @@ export const createPaymentUrl = async (req: Request, res: Response) => {
     const transaction = await db.query.transactions.findFirst({
       where: and(eq(transactions.id, transactionId), eq(transactions.buyerId, buyerId)),
       with: {
-        bike: { columns: { title: true, brand: true, model: true } },
+        bike: {
+          columns: { title: true },
+          with: {
+            brand: { columns: { id: true, name: true } },
+            model: { columns: { id: true, name: true } },
+          },
+        },
       },
     });
 
@@ -185,7 +191,13 @@ export const createRemainingPaymentUrl = async (req: Request, res: Response) => 
         eq(transactions.buyerId, buyerId)
       ),
       with: {
-        bike: { columns: { title: true, brand: true, model: true } },
+        bike: {
+          columns: { title: true },
+          with: {
+            brand: { columns: { id: true, name: true } },
+            model: { columns: { id: true, name: true } },
+          },
+        },
       },
     });
 
@@ -623,7 +635,13 @@ export const getPaymentStatus = async (req: Request, res: Response) => {
     const transaction = await db.query.transactions.findFirst({
       where: and(eq(transactions.id, transactionId), eq(transactions.buyerId, buyerId)),
       with: {
-        bike: { columns: { id: true, title: true, brand: true, model: true, images: true } },
+        bike: {
+          columns: { id: true, title: true, images: true },
+          with: {
+            brand: { columns: { id: true, name: true } },
+            model: { columns: { id: true, name: true } },
+          },
+        },
         seller: { columns: { id: true, name: true, phone: true } },
       },
     });
@@ -999,7 +1017,7 @@ export const getPayoutStatus = async (req: Request, res: Response) => {
  * Constraints:
  * - Transaction must be status="completed"
  * - Must be requested within 24 hours of transaction creation
- * - Only one refund per transaction (no duplicate refunds)
+ * - Only one refund per transaction (no duplicate refunthemds)
  * - Refund is immediately processed (status=completed)
  * 
  * On success:
@@ -1212,7 +1230,13 @@ export const listRefunds = async (req: Request, res: Response) => {
         transaction: {
           columns: { id: true, amount: true, status: true, createdAt: true },
           with: {
-            bike: { columns: { id: true, title: true, brand: true, model: true } },
+            bike: {
+              columns: { id: true, title: true },
+              with: {
+                brand: { columns: { id: true, name: true } },
+                model: { columns: { id: true, name: true } },
+              },
+            },
           },
         },
       },
