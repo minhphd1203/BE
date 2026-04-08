@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { db } from '../db';
-import { bikes, users, transactions, reports, categories, reportReasons, inspections, messages } from '../db/schema';
-import { desc, eq, and, or, isNotNull } from 'drizzle-orm';
+import { bikes, brands, models, users, transactions, reports, categories, reportReasons, inspections, messages } from '../db/schema';
+import { desc, eq, and, or, isNotNull, sql } from 'drizzle-orm';
 import { UserPublic, ApiResponse } from '../models';
 import { mapTransactionsWithShippingAlias, withShippingAddressAlias } from '../utils/transactionResponse';
 
@@ -1058,3 +1058,609 @@ export const deleteBike = async (req: Request, res: Response) => {
 // - getConversationDetails() - GET /api/messages/:partnerId
 // - sendMessage() - POST /api/messages/:partnerId
 // - closeConversation() - DELETE /api/messages/:partnerId/close
+
+// ============= BRANDS CRUD =============
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Get all brands with optional search
+ */
+export const getAllBrands = async (req: Request, res: Response) => {
+  try {
+    const { search, page = '1', limit = '20' } = req.query;
+    const pageNum = parseInt(page as string) || 1;
+    const limitNum = parseInt(limit as string) || 20;
+    const offset = (pageNum - 1) * limitNum;
+
+    const brandsData = await (search
+      ? db.query.brands.findMany({
+          where: sql`LOWER(${brands.name}) LIKE LOWER(${`%${search}%`})`,
+          orderBy: [brands.name],
+          limit: limitNum,
+          offset,
+        })
+      : db.query.brands.findMany({
+          orderBy: [brands.name],
+          limit: limitNum,
+          offset,
+        }));
+
+    const total = (await db.select({ count: sql`count(*)` }).from(brands))[0].count;
+
+    const response: ApiResponse = {
+      success: true,
+      data: brandsData,
+      message: 'Brands retrieved successfully',
+      meta: {
+        total: Number(total),
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(Number(total) / limitNum),
+      },
+    };
+
+    res.status(200).json(response);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error retrieving brands',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
+ * Get single brand by ID
+ */
+export const getBrandById = async (req: Request, res: Response) => {
+  try {
+    const { brandId } = req.params;
+
+    if (!UUID_REGEX.test(brandId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid brand ID format',
+      });
+    }
+
+    const brand = await db.query.brands.findFirst({
+      where: eq(brands.id, brandId),
+      with: {
+        models: {
+          columns: { id: true, name: true, description: true, createdAt: true },
+        },
+      },
+    });
+
+    if (!brand) {
+      return res.status(404).json({
+        success: false,
+        message: 'Brand not found',
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: brand,
+      message: 'Brand retrieved successfully',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error retrieving brand',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
+ * Create new brand
+ */
+export const createBrand = async (req: Request, res: Response) => {
+  try {
+    const { name, description } = req.body;
+
+    if (!name || typeof name !== 'string' || name.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        message: 'Brand name is required and must be a non-empty string',
+      });
+    }
+
+    const existingBrand = await db.query.brands.findFirst({
+      where: sql`LOWER(${brands.name}) = LOWER(${name.toLowerCase()})`,
+    });
+
+    if (existingBrand) {
+      return res.status(409).json({
+        success: false,
+        message: 'Brand with this name already exists',
+      });
+    }
+
+    const [newBrand] = await db
+      .insert(brands)
+      .values({
+        name: name.trim(),
+        description: description || null,
+      })
+      .returning();
+
+    res.status(201).json({
+      success: true,
+      data: newBrand,
+      message: 'Brand created successfully',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error creating brand',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
+ * Update brand
+ */
+export const updateBrand = async (req: Request, res: Response) => {
+  try {
+    const { brandId } = req.params;
+    const { name, description } = req.body;
+
+    if (!UUID_REGEX.test(brandId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid brand ID format',
+      });
+    }
+
+    const existingBrand = await db.query.brands.findFirst({
+      where: eq(brands.id, brandId),
+    });
+
+    if (!existingBrand) {
+      return res.status(404).json({
+        success: false,
+        message: 'Brand not found',
+      });
+    }
+
+    if (name && name !== existingBrand.name) {
+      const conflict = await db.query.brands.findFirst({
+        where: sql`LOWER(${brands.name}) = LOWER(${name.toLowerCase()})`,
+      });
+      if (conflict && conflict.id !== brandId) {
+        return res.status(409).json({
+          success: false,
+          message: 'Brand with this name already exists',
+        });
+      }
+    }
+
+    const [updatedBrand] = await db
+      .update(brands)
+      .set({
+        name: name || existingBrand.name,
+        description: description !== undefined ? description : existingBrand.description,
+        updatedAt: new Date(),
+      })
+      .where(eq(brands.id, brandId))
+      .returning();
+
+    res.status(200).json({
+      success: true,
+      data: updatedBrand,
+      message: 'Brand updated successfully',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error updating brand',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
+ * Delete brand (only if no models exist)
+ */
+export const deleteBrand = async (req: Request, res: Response) => {
+  try {
+    const { brandId } = req.params;
+
+    if (!UUID_REGEX.test(brandId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid brand ID format',
+      });
+    }
+
+    const existingBrand = await db.query.brands.findFirst({
+      where: eq(brands.id, brandId),
+      with: {
+        models: {
+          columns: { id: true },
+        },
+      },
+    });
+
+    if (!existingBrand) {
+      return res.status(404).json({
+        success: false,
+        message: 'Brand not found',
+      });
+    }
+
+    if (existingBrand.models && existingBrand.models.length > 0) {
+      return res.status(409).json({
+        success: false,
+        message: 'Cannot delete brand with existing models. Delete models first.',
+      });
+    }
+
+    await db.delete(brands).where(eq(brands.id, brandId));
+
+    res.status(200).json({
+      success: true,
+      message: 'Brand deleted successfully',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error deleting brand',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+// ============= MODELS CRUD =============
+
+/**
+ * Get all models (global)
+ */
+export const getAllModels = async (req: Request, res: Response) => {
+  try {
+    const { search, brandId, page = '1', limit = '20' } = req.query;
+    const pageNum = parseInt(page as string) || 1;
+    const limitNum = parseInt(limit as string) || 20;
+    const offset = (pageNum - 1) * limitNum;
+
+    let whereClause: any;
+
+    if (brandId) {
+      if (!UUID_REGEX.test(brandId as string)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid brand ID format',
+        });
+      }
+      whereClause = search
+        ? sql`${models.brandId} = ${brandId}::uuid AND LOWER(${models.name}) LIKE LOWER(${`%${search}%`})`
+        : sql`${models.brandId} = ${brandId}::uuid`;
+    } else {
+      whereClause = search ? sql`LOWER(${models.name}) LIKE LOWER(${`%${search}%`})` : undefined;
+    }
+
+    const modelsData = await db.query.models.findMany({
+      where: whereClause,
+      with: {
+        brand: {
+          columns: { id: true, name: true },
+        },
+      },
+      orderBy: [models.name],
+      limit: limitNum,
+      offset,
+    });
+
+    const total = (await db.select({ count: sql`count(*)` }).from(models))[0].count;
+
+    const response: ApiResponse = {
+      success: true,
+      data: modelsData,
+      message: 'Models retrieved successfully',
+      meta: {
+        total: Number(total),
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(Number(total) / limitNum),
+      },
+    };
+
+    res.status(200).json(response);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error retrieving models',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
+ * Get models by specific brand
+ */
+export const getModelsByBrand = async (req: Request, res: Response) => {
+  try {
+    const { brandId } = req.params;
+    const { search, page = '1', limit = '20' } = req.query;
+    const pageNum = parseInt(page as string) || 1;
+    const limitNum = parseInt(limit as string) || 20;
+    const offset = (pageNum - 1) * limitNum;
+
+    if (!UUID_REGEX.test(brandId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid brand ID format',
+      });
+    }
+
+    const brand = await db.query.brands.findFirst({
+      where: eq(brands.id, brandId),
+      columns: { id: true, name: true },
+    });
+
+    if (!brand) {
+      return res.status(404).json({
+        success: false,
+        message: 'Brand not found',
+      });
+    }
+
+    const modelsData = await db.query.models.findMany({
+      where: search
+        ? sql`${models.brandId} = ${brandId}::uuid AND LOWER(${models.name}) LIKE LOWER(${`%${search}%`})`
+        : sql`${models.brandId} = ${brandId}::uuid`,
+      orderBy: [models.name],
+      limit: limitNum,
+      offset,
+    });
+
+    const total = (
+      await db.select({ count: sql`count(*)` }).from(models).where(sql`${models.brandId} = ${brandId}::uuid`)
+    )[0].count;
+
+    const response: ApiResponse = {
+      success: true,
+      data: modelsData,
+      message: `Models for brand "${brand.name}" retrieved successfully`,
+      meta: {
+        total: Number(total),
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(Number(total) / limitNum),
+        brandId,
+        brandName: brand.name,
+      },
+    };
+
+    res.status(200).json(response);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error retrieving models',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
+ * Get single model by ID
+ */
+export const getModelById = async (req: Request, res: Response) => {
+  try {
+    const { modelId } = req.params;
+
+    if (!UUID_REGEX.test(modelId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid model ID format',
+      });
+    }
+
+    const model = await db.query.models.findFirst({
+      where: eq(models.id, modelId),
+      with: {
+        brand: {
+          columns: { id: true, name: true },
+        },
+      },
+    });
+
+    if (!model) {
+      return res.status(404).json({
+        success: false,
+        message: 'Model not found',
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: model,
+      message: 'Model retrieved successfully',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error retrieving model',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
+ * Create new model for a brand
+ */
+export const createModel = async (req: Request, res: Response) => {
+  try {
+    const { brandId } = req.params;
+    const { name, description } = req.body;
+
+    if (!UUID_REGEX.test(brandId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid brand ID format',
+      });
+    }
+
+    if (!name || typeof name !== 'string' || name.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        message: 'Model name is required and must be a non-empty string',
+      });
+    }
+
+    const brand = await db.query.brands.findFirst({
+      where: eq(brands.id, brandId),
+      columns: { id: true, name: true },
+    });
+
+    if (!brand) {
+      return res.status(404).json({
+        success: false,
+        message: 'Brand not found',
+      });
+    }
+
+    const existingModel = await db.query.models.findFirst({
+      where: sql`${models.brandId} = ${brandId}::uuid AND LOWER(${models.name}) = LOWER(${name.trim()})`,
+    });
+
+    if (existingModel) {
+      return res.status(409).json({
+        success: false,
+        message: `Model "${name}" already exists for brand "${brand.name}"`,
+      });
+    }
+
+    const [newModel] = await db
+      .insert(models)
+      .values({
+        brandId,
+        name: name.trim(),
+        description: description || null,
+      })
+      .returning();
+
+    res.status(201).json({
+      success: true,
+      data: newModel,
+      message: 'Model created successfully',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error creating model',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
+ * Update model
+ */
+export const updateModel = async (req: Request, res: Response) => {
+  try {
+    const { modelId } = req.params;
+    const { name, description } = req.body;
+
+    if (!UUID_REGEX.test(modelId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid model ID format',
+      });
+    }
+
+    const existingModel = await db.query.models.findFirst({
+      where: eq(models.id, modelId),
+      with: {
+        brand: {
+          columns: { id: true, name: true },
+        },
+      },
+    });
+
+    if (!existingModel) {
+      return res.status(404).json({
+        success: false,
+        message: 'Model not found',
+      });
+    }
+
+    if (name && name !== existingModel.name) {
+      const conflict = await db.query.models.findFirst({
+        where: sql`${models.brandId} = ${existingModel.brandId}::uuid AND LOWER(${models.name}) = LOWER(${name.trim()})`,
+      });
+      if (conflict && conflict.id !== modelId) {
+        return res.status(409).json({
+          success: false,
+          message: `Model "${name}" already exists for this brand`,
+        });
+      }
+    }
+
+    const [updatedModel] = await db
+      .update(models)
+      .set({
+        name: name || existingModel.name,
+        description: description !== undefined ? description : existingModel.description,
+        updatedAt: new Date(),
+      })
+      .where(eq(models.id, modelId))
+      .returning();
+
+    res.status(200).json({
+      success: true,
+      data: updatedModel,
+      message: 'Model updated successfully',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error updating model',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
+ * Delete model
+ */
+export const deleteModel = async (req: Request, res: Response) => {
+  try {
+    const { modelId } = req.params;
+
+    if (!UUID_REGEX.test(modelId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid model ID format',
+      });
+    }
+
+    const existingModel = await db.query.models.findFirst({
+      where: eq(models.id, modelId),
+    });
+
+    if (!existingModel) {
+      return res.status(404).json({
+        success: false,
+        message: 'Model not found',
+      });
+    }
+
+    await db.delete(models).where(eq(models.id, modelId));
+
+    res.status(200).json({
+      success: true,
+      message: 'Model deleted successfully',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error deleting model',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};

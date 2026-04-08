@@ -1,6 +1,6 @@
 {
-  "id": "e2a633b3-ef04-4e8e-9495-79d69e98ed94",
-  "prevId": "b76278d9-11e1-4d41-b8ce-ee0a1706ef15",
+  "id": "8c62e735-348b-4453-92d2-0153e45605da",
+  "prevId": "e2a633b3-ef04-4e8e-9495-79d69e98ed94",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -27,15 +27,15 @@
           "primaryKey": false,
           "notNull": true
         },
-        "brand": {
-          "name": "brand",
-          "type": "varchar(100)",
+        "brand_id": {
+          "name": "brand_id",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
-        "model": {
-          "name": "model",
-          "type": "varchar(100)",
+        "model_id": {
+          "name": "model_id",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
@@ -132,6 +132,32 @@
       },
       "indexes": {},
       "foreignKeys": {
+        "bikes_brand_id_brands_id_fk": {
+          "name": "bikes_brand_id_brands_id_fk",
+          "tableFrom": "bikes",
+          "tableTo": "brands",
+          "columnsFrom": [
+            "brand_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "bikes_model_id_models_id_fk": {
+          "name": "bikes_model_id_models_id_fk",
+          "tableFrom": "bikes",
+          "tableTo": "models",
+          "columnsFrom": [
+            "model_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
         "bikes_category_id_categories_id_fk": {
           "name": "bikes_category_id_categories_id_fk",
           "tableFrom": "bikes",
@@ -161,6 +187,60 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.brands": {
+      "name": "brands",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "brands_name_unique": {
+          "name": "brands_name_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "name"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -666,6 +746,72 @@
           "tableTo": "bikes",
           "columnsFrom": [
             "bike_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.models": {
+      "name": "models",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "brand_id": {
+          "name": "brand_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "models_brand_id_brands_id_fk": {
+          "name": "models_brand_id_brands_id_fk",
+          "tableFrom": "models",
+          "tableTo": "brands",
+          "columnsFrom": [
+            "brand_id"
           ],
           "columnsTo": [
             "id"

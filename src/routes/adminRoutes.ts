@@ -21,6 +21,19 @@ import {
   deleteReportReason,
   deleteBike,
 } from '../controllers/adminController';
+import {
+  getAllBrands,
+  getBrandById,
+  createBrand,
+  updateBrand,
+  deleteBrand,
+  getAllModels,
+  getModelById,
+  getModelsByBrand,
+  createModel,
+  updateModel,
+  deleteModel,
+} from '../controllers/adminController';
 import { isAdmin } from '../middleware/authMiddleware';
 import { messageUpload, attachFileUrl } from '../middleware/messageUploadMiddleware';
 
@@ -642,5 +655,339 @@ router.delete('/v1/report-reasons/:id', isAdmin, deleteReportReason);
  *         description: Bike not found
  */
 router.delete('/v1/bikes/:bikeId', isAdmin, deleteBike);
+
+// ================== BRANDS & MODELS MANAGEMENT ==================
+
+/**
+ * @swagger
+ * /api/admin/v1/brands:
+ *   get:
+ *     summary: Get all brands with optional search
+ *     tags: [Admin - Brands & Models]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *         description: Search brand by name
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *     responses:
+ *       200:
+ *         description: Successfully retrieved brands
+ */
+router.get('/v1/brands', isAdmin, getAllBrands);
+
+/**
+ * @swagger
+ * /api/admin/v1/brands/{brandId}:
+ *   get:
+ *     summary: Get single brand with its models
+ *     tags: [Admin - Brands & Models]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: brandId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: Successfully retrieved brand
+ *       404:
+ *         description: Brand not found
+ */
+router.get('/v1/brands/:brandId', isAdmin, getBrandById);
+
+/**
+ * @swagger
+ * /api/admin/v1/brands:
+ *   post:
+ *     summary: Create new brand
+ *     tags: [Admin - Brands & Models]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *             properties:
+ *               name:
+ *                 type: string
+ *               description:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: Brand created successfully
+ *       409:
+ *         description: Brand already exists
+ */
+router.post('/v1/brands', isAdmin, createBrand);
+
+/**
+ * @swagger
+ * /api/admin/v1/brands/{brandId}:
+ *   put:
+ *     summary: Update brand
+ *     tags: [Admin - Brands & Models]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: brandId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name:
+ *                 type: string
+ *               description:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Brand updated successfully
+ *       404:
+ *         description: Brand not found
+ */
+router.put('/v1/brands/:brandId', isAdmin, updateBrand);
+
+/**
+ * @swagger
+ * /api/admin/v1/brands/{brandId}:
+ *   delete:
+ *     summary: Delete brand (only if no models)
+ *     tags: [Admin - Brands & Models]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: brandId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: Brand deleted successfully
+ *       404:
+ *         description: Brand not found
+ *       409:
+ *         description: Brand still has models
+ */
+router.delete('/v1/brands/:brandId', isAdmin, deleteBrand);
+
+// ==================== MODELS ====================
+
+/**
+ * @swagger
+ * /api/admin/v1/models:
+ *   get:
+ *     summary: Get all models (global)
+ *     tags: [Admin - Brands & Models]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: brandId
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *     responses:
+ *       200:
+ *         description: Successfully retrieved models
+ */
+router.get('/v1/models', isAdmin, getAllModels);
+
+/**
+ * @swagger
+ * /api/admin/v1/brands/{brandId}/models:
+ *   get:
+ *     summary: Get models for specific brand
+ *     tags: [Admin - Brands & Models]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: brandId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *     responses:
+ *       200:
+ *         description: Successfully retrieved models
+ *       404:
+ *         description: Brand not found
+ */
+router.get('/v1/brands/:brandId/models', isAdmin, getModelsByBrand);
+
+/**
+ * @swagger
+ * /api/admin/v1/models/{modelId}:
+ *   get:
+ *     summary: Get single model
+ *     tags: [Admin - Brands & Models]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: modelId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: Successfully retrieved model
+ *       404:
+ *         description: Model not found
+ */
+router.get('/v1/models/:modelId', isAdmin, getModelById);
+
+/**
+ * @swagger
+ * /api/admin/v1/brands/{brandId}/models:
+ *   post:
+ *     summary: Create new model for brand
+ *     tags: [Admin - Brands & Models]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: brandId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *             properties:
+ *               name:
+ *                 type: string
+ *               description:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: Model created successfully
+ *       404:
+ *         description: Brand not found
+ *       409:
+ *         description: Model already exists for this brand
+ */
+router.post('/v1/brands/:brandId/models', isAdmin, createModel);
+
+/**
+ * @swagger
+ * /api/admin/v1/models/{modelId}:
+ *   put:
+ *     summary: Update model
+ *     tags: [Admin - Brands & Models]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: modelId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name:
+ *                 type: string
+ *               description:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Model updated successfully
+ *       404:
+ *         description: Model not found
+ */
+router.put('/v1/models/:modelId', isAdmin, updateModel);
+
+/**
+ * @swagger
+ * /api/admin/v1/models/{modelId}:
+ *   delete:
+ *     summary: Delete model
+ *     tags: [Admin - Brands & Models]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: modelId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: Model deleted successfully
+ *       404:
+ *         description: Model not found
+ */
+router.delete('/v1/models/:modelId', isAdmin, deleteModel);
 
 export default router;

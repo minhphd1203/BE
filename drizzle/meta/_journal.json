@@ -169,6 +169,13 @@
       "when": 1775665231685,
       "tag": "0024_unknown_whizzer",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1775667982110,
+      "tag": "0025_create_brands_models",
+      "breakpoints": true
     }
   ]
 }

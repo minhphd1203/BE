@@ -34,13 +34,32 @@ export const categories = pgTable('categories', {
   updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
 });
 
+// Brand table
+export const brands = pgTable('brands', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: varchar('name', { length: 100 }).notNull().unique(),
+  description: text('description'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
+});
+
+// Model table
+export const models = pgTable('models', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  brandId: uuid('brand_id').notNull().references(() => brands.id),
+  name: varchar('name', { length: 100 }).notNull(),
+  description: text('description'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
+});
+
 // Bike table
 export const bikes = pgTable('bikes', {
   id: uuid('id').primaryKey().defaultRandom(),
   title: varchar('title', { length: 255 }).notNull(),
   description: text('description').notNull(),
-  brand: varchar('brand', { length: 100 }).notNull(),
-  model: varchar('model', { length: 100 }).notNull(),
+  brandId: uuid('brand_id').notNull().references(() => brands.id),
+  modelId: uuid('model_id').notNull().references(() => models.id),
   year: integer('year').notNull(),
   price: doublePrecision('price').notNull(),
   condition: varchar('condition', { length: 50 }).notNull(),
@@ -253,6 +272,19 @@ export const categoriesRelations = relations(categories, ({ many }) => ({
   bikes: many(bikes),
 }));
 
+export const brandsRelations = relations(brands, ({ many }) => ({
+  models: many(models),
+  bikes: many(bikes),
+}));
+
+export const modelsRelations = relations(models, ({ one, many }) => ({
+  brand: one(brands, {
+    fields: [models.brandId],
+    references: [brands.id],
+  }),
+  bikes: many(bikes),
+}));
+
 export const reportReasonsRelations = relations(reportReasons, ({ many }) => ({
   reports: many(reports),
 }));
@@ -287,6 +319,14 @@ export const bikesRelations = relations(bikes, ({ one, many }) => ({
   category: one(categories, {
     fields: [bikes.categoryId],
     references: [categories.id],
+  }),
+  brand: one(brands, {
+    fields: [bikes.brandId],
+    references: [brands.id],
+  }),
+  model: one(models, {
+    fields: [bikes.modelId],
+    references: [models.id],
   }),
   transactions: many(transactions),
   reports: many(reports),

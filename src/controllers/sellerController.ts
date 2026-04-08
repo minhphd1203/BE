@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { db } from '../db';
-import { bikes, transactions, messages, reviews, categories, users, inspections, wishlists, reports } from '../db/schema';
+import { bikes, transactions, messages, reviews, categories, users, inspections, wishlists, reports, brands, models } from '../db/schema';
 import { desc, eq, and, or, like, asc, sql } from 'drizzle-orm';
 import type { BikeListingFiles } from '../middleware/bikeUploadMiddleware';
 import {
@@ -65,6 +65,82 @@ async function resolveCategoryInput(
   return {
     ok: false,
     message: `Không tìm thấy danh mục "${s}". Dùng tên đúng (vd: Mountain Bike), slug (vd: mountain-bike), hoặc UUID. Gọi GET /api/seller/v1/categories để xem danh sách.`,
+  };
+}
+
+/**
+ * Resolve brand input: by UUID or by name (case-insensitive match in DB)
+ */
+async function resolveBrandInput(
+  raw: unknown
+): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
+  if (raw === undefined || raw === null || raw === '') {
+    return { ok: false, message: 'Brand không được để trống' };
+  }
+  const s = String(raw).trim();
+
+  if (UUID_REGEX.test(s)) {
+    const row = await db.query.brands.findFirst({
+      where: eq(brands.id, s),
+      columns: { id: true },
+    });
+    if (!row) {
+      return { ok: false, message: 'Brand không tồn tại (UUID không hợp lệ).' };
+    }
+    return { ok: true, id: row.id };
+  }
+
+  const row = await db.query.brands.findFirst({
+    where: sql`lower(trim(${brands.name})) = ${s.toLowerCase()}`,
+    columns: { id: true },
+  });
+  if (row) {
+    return { ok: true, id: row.id };
+  }
+
+  return {
+    ok: false,
+    message: `Không tìm thấy brand "${s}". Vui lòng chọn từ danh sách hoặc liên hệ admin.`,
+  };
+}
+
+/**
+ * Resolve model input: by UUID or by name + brandId (case-insensitive match in DB)
+ */
+async function resolveModelInput(
+  raw: unknown,
+  brandId: string
+): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
+  if (raw === undefined || raw === null || raw === '') {
+    return { ok: false, message: 'Model không được để trống' };
+  }
+  const s = String(raw).trim();
+
+  if (UUID_REGEX.test(s)) {
+    const row = await db.query.models.findFirst({
+      where: and(eq(models.id, s), eq(models.brandId, brandId)),
+      columns: { id: true },
+    });
+    if (!row) {
+      return { ok: false, message: 'Model không tồn tại cho brand này.' };
+    }
+    return { ok: true, id: row.id };
+  }
+
+  const row = await db.query.models.findFirst({
+    where: and(
+      eq(models.brandId, brandId),
+      sql`lower(trim(${models.name})) = ${s.toLowerCase()}`
+    ),
+    columns: { id: true },
+  });
+  if (row) {
+    return { ok: true, id: row.id };
+  }
+
+  return {
+    ok: false,
+    message: `Không tìm thấy model "${s}" cho brand này. Vui lòng chọn từ danh sách hoặc liên hệ admin.`,
   };
 }
 
@@ -261,13 +337,27 @@ export const createBike = async (req: Request, res: Response) => {
       finalCategoryId = resolved.id;
     }
 
+    // Resolve brand
+    const brandResolved = await resolveBrandInput(brand);
+    if (!brandResolved.ok) {
+      return res.status(400).json({ success: false, message: brandResolved.message });
+    }
+    const brandId = brandResolved.id;
+
+    // Resolve model
+    const modelResolved = await resolveModelInput(model, brandId);
+    if (!modelResolved.ok) {
+      return res.status(400).json({ success: false, message: modelResolved.message });
+    }
+    const modelId = modelResolved.id;
+
     const [newBike] = await db
       .insert(bikes)
       .values({
         title,
         description,
-        brand,
-        model,
+        brandId,
+        modelId,
         year: yearParsed.value,
         price: priceParsed.value,
         condition,
@@ -322,11 +412,7 @@ export const getMyBikes = async (req: Request, res: Response) => {
 
     if (search) {
       filters.push(
-        or(
-          like(bikes.title, `%${search}%`),
-          like(bikes.brand, `%${search}%`),
-          like(bikes.model, `%${search}%`)
-        )
+        like(bikes.title, `%${search}%`)
       );
     }
 
@@ -347,12 +433,16 @@ export const getMyBikes = async (req: Request, res: Response) => {
         category: {
           columns: { id: true, name: true, slug: true },
         },
+        brand: {
+          columns: { id: true, name: true },
+        },
+        model: {
+          columns: { id: true, name: true },
+        },
       },
       columns: {
         id: true,
         title: true,
-        brand: true,
-        model: true,
         year: true,
         price: true,
         condition: true,
@@ -370,9 +460,19 @@ export const getMyBikes = async (req: Request, res: Response) => {
       offset,
     });
 
+    // Apply search filter on results if search includes brand/model
+    let finalBikes = myBikes;
+    if (search) {
+      const searchLower = (search as string).toLowerCase();
+      finalBikes = myBikes.filter(bike =>
+        bike.brand?.name.toLowerCase().includes(searchLower) ||
+        bike.model?.name.toLowerCase().includes(searchLower)
+      );
+    }
+
     res.status(200).json({
       success: true,
-      data: myBikes,
+      data: finalBikes,
       message: 'Danh sách tin đăng fetched successfully',
       meta: {
         total,
@@ -503,8 +603,26 @@ export const updateBike = async (req: Request, res: Response) => {
     const updateData: Record<string, any> = {};
     if (title !== undefined) updateData.title = title;
     if (description !== undefined) updateData.description = description;
-    if (brand !== undefined) updateData.brand = brand;
-    if (model !== undefined) updateData.model = model;
+    
+    // Handle brand and model resolution
+    if (brand !== undefined) {
+      const brandResolved = await resolveBrandInput(brand);
+      if (!brandResolved.ok) {
+        return res.status(400).json({ success: false, message: brandResolved.message });
+      }
+      updateData.brandId = brandResolved.id;
+    }
+    
+    if (model !== undefined) {
+      // Need to use the new brandId or existing one
+      const brandIdToUse = updateData.brandId || existingBike.brandId;
+      const modelResolved = await resolveModelInput(model, brandIdToUse);
+      if (!modelResolved.ok) {
+        return res.status(400).json({ success: false, message: modelResolved.message });
+      }
+      updateData.modelId = modelResolved.id;
+    }
+    
     if (year !== undefined) {
       const y = parseBikeYear(year);
       if (!y.ok) {
@@ -566,7 +684,7 @@ export const updateBike = async (req: Request, res: Response) => {
     }
 
     // Core fields that trigger resets
-    const coreFields = ['title', 'description', 'brand', 'model', 'year', 'price', 'condition'];
+    const coreFields = ['title', 'description', 'brandId', 'modelId', 'year', 'price', 'condition'];
     const editingCoreFields = coreFields.some((f) => updateData[f] !== undefined);
     
     // SCENARIO 1: Free edit (pending status, no inspection yet) → no changes
@@ -866,7 +984,11 @@ export const getMyTransactions = async (req: Request, res: Response) => {
       },
       with: {
         bike: {
-          columns: { id: true, title: true, brand: true, model: true, price: true, images: true },
+          columns: { id: true, title: true, price: true, images: true },
+          with: {
+            brand: { columns: { id: true, name: true } },
+            model: { columns: { id: true, name: true } },
+          },
         },
         buyer: {
           columns: { id: true, name: true, email: true, phone: true, avatar: true },
@@ -934,11 +1056,13 @@ export const getMyTransactionById = async (req: Request, res: Response) => {
           columns: {
             id: true,
             title: true,
-            brand: true,
-            model: true,
             price: true,
             images: true,
             status: true,
+          },
+          with: {
+            brand: { columns: { id: true, name: true } },
+            model: { columns: { id: true, name: true } },
           },
         },
         buyer: {
@@ -1104,7 +1228,15 @@ export const getMyReviews = async (req: Request, res: Response) => {
         reviewer: { columns: { id: true, name: true, avatar: true } },
         transaction: {
           columns: { id: true, amount: true, createdAt: true },
-          with: { bike: { columns: { id: true, title: true, brand: true, model: true } } },
+          with: {
+            bike: {
+              columns: { id: true, title: true },
+              with: {
+                brand: { columns: { id: true, name: true } },
+                model: { columns: { id: true, name: true } },
+              },
+            },
+          },
         },
       },
       orderBy: [desc(reviews.createdAt)],
