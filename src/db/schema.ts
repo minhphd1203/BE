@@ -73,8 +73,8 @@ export const transactions = pgTable('transactions', {
   bikeId: uuid('bike_id').notNull().references(() => bikes.id),
   buyerId: uuid('buyer_id').notNull().references(() => users.id),
   sellerId: uuid('seller_id').notNull().references(() => users.id),
-  amount: doublePrecision('amount').notNull(), // Amount paid in this transaction
-  transactionType: varchar('transaction_type', { length: 50 }).notNull().default('full_payment'), // full_payment, deposit
+  amount: doublePrecision('amount').notNull(), // Amount paid in this transaction (buyer sees this)
+  transactionType: varchar('transaction_type', { length: 50 }).notNull().default('full_payment'), // full_payment, deposit, remaining_payment
   remainingBalance: doublePrecision('remaining_balance'), // For deposits, the remaining amount to pay
   status: varchar('status', { length: 50 }).notNull().default('pending'), // pending, approved, completed, cancelled
   paymentMethod: varchar('payment_method', { length: 50 }),
@@ -84,6 +84,10 @@ export const transactions = pgTable('transactions', {
   buyerPhone: varchar('buyer_phone', { length: 20 }), // Buyer contact number
   buyerEmail: varchar('buyer_email', { length: 255 }), // Buyer email
   deliveryId: uuid('delivery_id').references(() => deliveries.id), // FK to delivery
+  // System fee (5% of original bike price) - applied to full_payment & remaining_payment only
+  systemFee: doublePrecision('system_fee').notNull().default(0), // 5% of original price (seller pays this)
+  sellerNetAmount: doublePrecision('seller_net_amount').notNull().default(0), // amount - systemFee (what seller receives in payout)
+  originalBikePrice: doublePrecision('original_bike_price'), // Original bike price (for fee calculation on remaining_payment)
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
 });
@@ -107,6 +111,22 @@ export const payouts = pgTable('payouts', {
   providerTransactionId: varchar('provider_transaction_id', { length: 100 }), // Bank reference number
   failureReason: text('failure_reason'), // If failed
   webhookReceivedAt: timestamp('webhook_received_at'), // When callback received
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
+});
+
+// Refunds table (buyer refund requests - full refund only for now)
+export const refunds = pgTable('refunds', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  transactionId: uuid('transaction_id').notNull().references(() => transactions.id),
+  reportId: uuid('report_id').references(() => reports.id), // Optional: link to report if refund triggered from report approval
+  buyerId: uuid('buyer_id').notNull().references(() => users.id),
+  sellerId: uuid('seller_id').notNull().references(() => users.id),
+  amount: doublePrecision('amount').notNull(), // Full refund amount
+  reason: varchar('reason', { length: 500 }).notNull(), // Why buyer is requesting refund
+  status: varchar('status', { length: 50 }).notNull().default('completed'), // pending, completed, rejected
+  rejectedReason: text('rejected_reason'), // If rejected in future
+  processedAt: timestamp('processed_at'), // When refund was processed
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
 });
@@ -148,6 +168,7 @@ export const reports = pgTable('reports', {
   reporterId: uuid('reporter_id').notNull().references(() => users.id),
   reportedUserId: uuid('reported_user_id').references(() => users.id),
   reportedBikeId: uuid('reported_bike_id').references(() => bikes.id),
+  transactionId: uuid('transaction_id').references(() => transactions.id), // Optional: link to transaction if report submitted from transaction detail page
   reasonId: uuid('reason_id').references(() => reportReasons.id), // NULL if "Others"
   reasonText: text('reason_text'), // Used when reasonId is NULL (Others option)
   description: text('description').notNull(),
@@ -312,6 +333,25 @@ export const payoutsRelations = relations(payouts, ({ one }) => ({
   }),
 }));
 
+export const refundsRelations = relations(refunds, ({ one }) => ({
+  transaction: one(transactions, {
+    fields: [refunds.transactionId],
+    references: [transactions.id],
+  }),
+  report: one(reports, {
+    fields: [refunds.reportId],
+    references: [reports.id],
+  }),
+  buyer: one(users, {
+    fields: [refunds.buyerId],
+    references: [users.id],
+  }),
+  seller: one(users, {
+    fields: [refunds.sellerId],
+    references: [users.id],
+  }),
+}));
+
 export const reportsRelations = relations(reports, ({ one }) => ({
   reporter: one(users, {
     fields: [reports.reporterId],
@@ -326,6 +366,10 @@ export const reportsRelations = relations(reports, ({ one }) => ({
   reportedBike: one(bikes, {
     fields: [reports.reportedBikeId],
     references: [bikes.id],
+  }),
+  transaction: one(transactions, {
+    fields: [reports.transactionId],
+    references: [transactions.id],
   }),
   reason: one(reportReasons, {
     fields: [reports.reasonId],

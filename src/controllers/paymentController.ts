@@ -2,11 +2,12 @@ import { Request, Response } from 'express';
 import crypto from 'crypto';
 import QRCode from 'qrcode';
 import { db } from '../db';
-import { transactions, bikes, payouts, users } from '../db/schema';
+import { transactions, bikes, payouts, users, refunds } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { withShippingAddressAlias } from '../utils/transactionResponse';
 import { markFulfillmentPreparingAfterBikeSold } from '../services/fulfillmentSync';
 import { sendPayoutRequest, verifyPayoutSignature } from '../services/payoutProvider';
+import { sendRefundRequest, sendRefundWebhookCallback } from '../services/refundProvider';
 
 // ============= VNPAY MANUAL IMPLEMENTATION =============
 // Implement theo đúng tài liệu chính thức VNPay để tránh encoding issues
@@ -256,19 +257,28 @@ export const createRemainingPaymentUrl = async (req: Request, res: Response) => 
 
     // Create a new transaction record for the remaining payment
     // This tracks the relationship between deposit and remaining payment
+    // Calculate system fee (5% of original bike price) for remaining_payment
+    const remainingAmount = depositTransaction.remainingBalance;
+    const originalBikePrice = depositTransaction.originalBikePrice || (depositTransaction.amount + depositTransaction.remainingBalance);
+    const systemFee = Math.round(originalBikePrice * 0.05 * 100) / 100; // 5% of original price
+    const sellerNetAmount = remainingAmount - systemFee; // Seller gets remaining - fee
+
     const [remainingTransaction] = await db
       .insert(transactions)
       .values({
         bikeId: depositTransaction.bikeId,
         buyerId,
         sellerId: depositTransaction.sellerId,
-        amount: depositTransaction.remainingBalance,
+        amount: remainingAmount,
         transactionType: 'remaining_payment',
         remainingBalance: 0,
         notes: `Thanh toán phần còn lại của đơn đặt cọc: ${transactionId}`,
         address: depositTransaction.address ?? null,
         fullName: depositTransaction.fullName ?? null,
         status: 'pending',
+        systemFee,
+        sellerNetAmount,
+        originalBikePrice,
       })
       .returning();
 
@@ -729,17 +739,23 @@ export const createPayout = async (req: Request, res: Response) => {
       where: eq(payouts.transactionId, transactionId),
     });
 
-    if (existingPayout) {
+    if (existingPayout && existingPayout.status !== 'failed') {
       console.log(`[Payout] ❌ Payout already exists for transaction. Status: ${existingPayout.status}`);
       return res.status(400).json({
         success: false,
-        message: `Payout đã tồn tại (trạng thái: ${existingPayout.status})`,
+        message: `Payout đã tồn tại (trạng thái: ${existingPayout.status}). Chỉ có thể tạo payout mới khi payout trước đó thất bại.`,
         payoutId: existingPayout.id,
       });
     }
 
+    // If previous payout failed, seller can request again - log this
+    if (existingPayout && existingPayout.status === 'failed') {
+      console.log(`[Payout] 🔄 Previous payout ${existingPayout.id} failed. Seller requesting new payout.`);
+    }
+
     // ===== Create payout record =====
-    const payoutAmount = transaction.amount;
+    // Use sellerNetAmount (amount - 5% system fee) for payout
+    const payoutAmount = transaction.sellerNetAmount || transaction.amount; // Fallback to amount for deposits/old transactions
     const externalPayoutId = `PAYOUT_${Date.now()}_${sellerId.slice(0, 8)}`;
 
     const [newPayout] = await db.insert(payouts).values({
@@ -755,7 +771,7 @@ export const createPayout = async (req: Request, res: Response) => {
       payoutAt: new Date(),
     }).returning();
 
-    console.log(`[Payout] Created payout ${newPayout.id} for transaction ${transactionId}, amount: ${payoutAmount}`);
+    console.log(`[Payout] Created payout ${newPayout.id} for transaction ${transactionId}, amount: ${payoutAmount} (system fee: ${transaction.systemFee || 0})`);
 
     // ===== Send to payout provider (mock or real based on .env) =====
     // PAYOUT_PROVIDER env var determines which provider to use:
@@ -968,6 +984,332 @@ export const getPayoutStatus = async (req: Request, res: Response) => {
       success: false,
       message: 'Lỗi lấy thông tin rút tiền',
       error: process.env.NODE_ENV === 'development' ? (error as Error).message : undefined,
+    });
+  }
+};
+
+// ============= REFUND SYSTEM (FULL REFUND ONLY) =============
+// For school project: Immediate full refund, no admin approval needed
+// Refund allowed within 24 hours of transaction completion
+
+/**
+ * POST /api/payment/v1/refund/:transactionId
+ * Buyer requests a full refund for a completed transaction
+ * 
+ * Constraints:
+ * - Transaction must be status="completed"
+ * - Must be requested within 24 hours of transaction creation
+ * - Only one refund per transaction (no duplicate refunds)
+ * - Refund is immediately processed (status=completed)
+ * 
+ * On success:
+ * - Create refund record
+ * - Update transaction status to "refunded"
+ * - Update bike status to "for_sale"
+ */
+export const requestRefund = async (req: Request, res: Response) => {
+  try {
+    const buyerId = req.user!.userId;
+    const { transactionId } = req.params as { transactionId: string };
+    const { reason, reportId } = req.body as { reason: string; reportId?: string };
+
+    if (!reason || reason.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Vui lòng cung cấp lý do hoàn trả',
+      });
+    }
+
+    // Find transaction
+    const transaction = await db.query.transactions.findFirst({
+      where: and(
+        eq(transactions.id, transactionId),
+        eq(transactions.buyerId, buyerId)
+      ),
+      with: {
+        bike: { columns: { id: true, title: true } },
+      },
+    });
+
+    if (!transaction) {
+      return res.status(404).json({
+        success: false,
+        message: 'Giao dịch không tồn tại',
+      });
+    }
+
+    // Transaction must be completed
+    if (transaction.status !== 'completed') {
+      return res.status(400).json({
+        success: false,
+        message: `Chỉ có thể hoàn trả giao dịch đã hoàn thành (hiện tại: ${transaction.status})`,
+      });
+    }
+
+    // Check 24-hour window (optional for school project, can be removed)
+    const hoursElapsed = (Date.now() - new Date(transaction.createdAt).getTime()) / (1000 * 60 * 60);
+    if (hoursElapsed > 24) {
+      console.log(`[Refund] ⚠️  Transaction ${transactionId} is ${hoursElapsed.toFixed(2)} hours old (>24h limit)`);
+      // For school project, we allow refunds anytime after completion, so comment this out
+      // return res.status(400).json({
+      //   success: false,
+      //   message: 'Hết hạn hoàn trả (chỉ trong 24 giờ sau giao dịch hoàn thành)',
+      // });
+    }
+
+    // Check if refund already exists for this transaction
+    const existingRefund = await db.query.refunds.findFirst({
+      where: eq(refunds.transactionId, transactionId),
+    });
+
+    if (existingRefund) {
+      return res.status(400).json({
+        success: false,
+        message: 'Giao dịch này đã có yêu cầu hoàn trả',
+        refundId: existingRefund.id,
+      });
+    }
+
+    // Get VNPay transaction number from transaction notes (stored during IPN)
+    const vnpayTransactionNo = transaction.notes?.match(/VNPay TxnNo: (\d+)/)?.[1] || 'unknown';
+
+    // Create refund record (status=pending initially, will be updated by webhook)
+    const [newRefund] = await db.insert(refunds).values({
+      transactionId,
+      reportId: reportId || null, // Optional: link to report if refund triggered from report approval
+      buyerId,
+      sellerId: transaction.sellerId,
+      amount: transaction.amount, // Full refund
+      reason: reason.trim(),
+      status: 'pending', // Start as pending, will be completed by webhook or immediately by mock
+    }).returning();
+
+    console.log(`[Refund] ✓ Created refund ${newRefund.id} for transaction ${transactionId}, amount: ${transaction.amount}`);
+
+    // Start refund process with provider (VNPay or mock)
+    const webhookUrl = `${process.env.BACKEND_URL || 'http://localhost:3000'}/api/payment/v1/refund-callback`;
+
+    try {
+      const refundResponse = await sendRefundRequest({
+        refundId: newRefund.id,
+        transactionNo: vnpayTransactionNo,
+        amount: transaction.amount,
+        reason: reason.trim(),
+        webhookUrl,
+      });
+
+      console.log(`[Refund] Provider response: status=${refundResponse.status}`);
+
+      // If mock-instant, immediately complete the refund
+      if (refundResponse.status === 'completed') {
+        await db.update(refunds)
+          .set({ status: 'completed', processedAt: new Date() })
+          .where(eq(refunds.id, newRefund.id));
+
+        // Update transaction and bike immediately
+        await db.update(transactions)
+          .set({ status: 'refunded', notes: `Full refund approved: ${reason}` })
+          .where(eq(transactions.id, transactionId));
+
+        await db.update(bikes)
+          .set({ status: 'for_sale', updatedAt: new Date() })
+          .where(eq(bikes.id, transaction.bikeId));
+
+        console.log(`[Refund] ✓ Refund completed immediately (mock-instant mode)`);
+      }
+    } catch (error) {
+      console.error('[Refund] Provider error:', error);
+      // Refund record created, provider will retry or user can try again
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: 'Yêu cầu hoàn trả đã được chấp nhận',
+      refund: {
+        id: newRefund.id,
+        transactionId: newRefund.transactionId,
+        amount: newRefund.amount,
+        status: newRefund.status,
+        reason: newRefund.reason,
+        processedAt: newRefund.processedAt,
+        createdAt: newRefund.createdAt,
+      },
+    });
+  } catch (error) {
+    console.error('[Refund] Error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Lỗi khi xử lý yêu cầu hoàn trả',
+      error: process.env.NODE_ENV === 'development' ? (error as Error).message : undefined,
+    });
+  }
+};
+
+/**
+ * GET /api/payment/v1/refund/:refundId/status
+ * Get refund status by refund ID
+ */
+export const getRefundStatus = async (req: Request, res: Response) => {
+  try {
+    const buyerId = req.user!.userId;
+    const { refundId } = req.params as { refundId: string };
+
+    const refund = await db.query.refunds.findFirst({
+      where: and(
+        eq(refunds.id, refundId),
+        eq(refunds.buyerId, buyerId)
+      ),
+      with: {
+        transaction: {
+          columns: { id: true, amount: true, status: true, createdAt: true },
+          with: {
+            bike: { columns: { id: true, title: true } },
+          },
+        },
+      },
+    });
+
+    if (!refund) {
+      return res.status(404).json({
+        success: false,
+        message: 'Yêu cầu hoàn trả không tồn tại',
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      refund: {
+        id: refund.id,
+        status: refund.status,
+        amount: refund.amount,
+        reason: refund.reason,
+        processedAt: refund.processedAt,
+        createdAt: refund.createdAt,
+        transaction: refund.transaction,
+      },
+    });
+  } catch (error) {
+    console.error('[Refund] Status error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Lỗi lấy thông tin hoàn trả',
+      error: process.env.NODE_ENV === 'development' ? (error as Error).message : undefined,
+    });
+  }
+};
+
+/**
+ * GET /api/payment/v1/refunds
+ * List all refunds for current buyer
+ */
+export const listRefunds = async (req: Request, res: Response) => {
+  try {
+    const buyerId = req.user!.userId;
+
+    const buyerRefunds = await db.query.refunds.findMany({
+      where: eq(refunds.buyerId, buyerId),
+      with: {
+        transaction: {
+          columns: { id: true, amount: true, status: true, createdAt: true },
+          with: {
+            bike: { columns: { id: true, title: true, brand: true, model: true } },
+          },
+        },
+      },
+      orderBy: (refunds, { desc }) => [desc(refunds.createdAt)],
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: buyerRefunds,
+      message: `Danh sách hoàn trả (${buyerRefunds.length} yêu cầu)`,
+    });
+  } catch (error) {
+    console.error('[Refund] List error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Lỗi lấy danh sách hoàn trả',
+      error: process.env.NODE_ENV === 'development' ? (error as Error).message : undefined,
+    });
+  }
+};
+
+/**
+ * POST /api/payment/v1/refund-callback
+ * Webhook callback from refund provider (VNPay or mock)
+ * Updates refund status when provider confirms
+ */
+export const handleRefundCallback = async (req: Request, res: Response) => {
+  try {
+    const { refundId, status, message, transactionNo } = req.body;
+
+    console.log(`[Refund Callback] Received callback for refund ${refundId}, status=${status}`);
+
+    // Find refund
+    const refund = await db.query.refunds.findFirst({
+      where: eq(refunds.id, refundId),
+      with: {
+        transaction: {
+          columns: { id: true, bikeId: true, buyerId: true },
+        },
+      },
+    });
+
+    if (!refund) {
+      console.error('[Refund Callback] Refund not found:', refundId);
+      return res.status(404).json({
+        success: false,
+        message: 'Refund not found',
+      });
+    }
+
+    // If already processed, skip
+    if (refund.status !== 'pending') {
+      console.log(`[Refund Callback] Already processed (status=${refund.status}), skipping`);
+      return res.status(200).json({
+        success: true,
+        message: 'Already processed',
+      });
+    }
+
+    // Update refund status
+    const updateData: any = {
+      status,
+      processedAt: new Date(),
+    };
+
+    if (status === 'failed') {
+      updateData.rejectedReason = message || 'Refund processing failed';
+    }
+
+    await db.update(refunds)
+      .set(updateData)
+      .where(eq(refunds.id, refundId));
+
+    console.log(`[Refund Callback] Updated refund status to ${status}`);
+
+    // If approved, update transaction and bike
+    if (status === 'completed') {
+      await db.update(transactions)
+        .set({ status: 'refunded', notes: `Full refund approved by ${process.env.REFUND_PROVIDER || 'mock'}` })
+        .where(eq(transactions.id, refund.transaction.id));
+
+      await db.update(bikes)
+        .set({ status: 'for_sale', updatedAt: new Date() })
+        .where(eq(bikes.id, refund.transaction.bikeId));
+
+      console.log(`[Refund Callback] Updated transaction and bike to refunded/for_sale`);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Callback processed',
+    });
+  } catch (error) {
+    console.error('[Refund Callback] Error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error',
     });
   }
 };

@@ -558,6 +558,17 @@ export const createTransaction = async (req: Request, res: Response) => {
       }
     }
 
+    // Calculate system fee (5%) for full_payment only
+    let systemFee = 0;
+    let sellerNetAmount = 0;
+    if (transactionType === TRANSACTION_TYPES.FULL_PAYMENT) {
+      systemFee = Math.round(transactionAmount * 0.05 * 100) / 100; // 5% fee
+      sellerNetAmount = transactionAmount - systemFee; // What seller receives in payout
+    } else {
+      // Deposits: no system fee, seller gets full deposit
+      sellerNetAmount = transactionAmount;
+    }
+
     const [newTransaction] = await db
       .insert(transactions)
       .values({
@@ -572,6 +583,9 @@ export const createTransaction = async (req: Request, res: Response) => {
         address: parsedAddress.value,
         fullName: parsedFullName.value,
         status: 'pending',
+        systemFee,
+        sellerNetAmount,
+        originalBikePrice: bike.price, // Store original price for fee calculation
       })
       .returning();
 
@@ -1070,7 +1084,7 @@ export const submitReport = async (req: Request, res: Response) => {
       return res.status(403).json({ success: false, message: 'Sellers cannot submit reports' });
     }
 
-    const { reportedUserId, reportedBikeId, reasonId, reasonText, description } = req.body;
+    const { reportedUserId, reportedBikeId, reasonId, reasonText, description, transactionId } = req.body;
 
     // Validate: reasonId must be provided
     if (!reasonId) {
@@ -1159,6 +1173,7 @@ export const submitReport = async (req: Request, res: Response) => {
         reporterId,
         reportedUserId: finalReportedUserId,
         reportedBikeId: reportedBikeId || null,
+        transactionId: transactionId || null, // Optional: link to transaction if report submitted from transaction detail page
         reasonId: actualReasonId,
         reasonText: reasonText || null,
         description,

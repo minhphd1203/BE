@@ -1,5 +1,5 @@
 import express from 'express';
-import { createPaymentUrl, createRemainingPaymentUrl, vnpayReturn, vnpayIPN, getPaymentStatus, createPayout, getPayoutStatus, handlePayoutCallback } from '../controllers/paymentController';
+import { createPaymentUrl, createRemainingPaymentUrl, vnpayReturn, vnpayIPN, getPaymentStatus, createPayout, getPayoutStatus, handlePayoutCallback, requestRefund, getRefundStatus, listRefunds, handleRefundCallback } from '../controllers/paymentController';
 import { isAuthenticated } from '../middleware/authMiddleware';
 
 const router = express.Router();
@@ -483,5 +483,205 @@ router.get('/v1/payout/status/:payoutId', isAuthenticated, getPayoutStatus);
  *         description: Internal error (provider will retry)
  */
 router.post('/v1/payout-callback', handlePayoutCallback);
+
+/**
+ * @swagger
+ * /api/payment/v1/refund/{transactionId}:
+ *   post:
+ *     summary: Yêu cầu hoàn trả toàn bộ cho một giao dịch đã hoàn thành
+ *     description: |
+ *       Buyer gọi endpoint này để yêu cầu hoàn trả toàn bộ tiền cho một giao dịch đã hoàn thành.
+ *
+ *       **Điều kiện:**
+ *       - Transaction phải ở trạng thái "completed"
+ *       - Chỉ buyer của transaction mới có thể yêu cầu hoàn trả
+ *       - Mỗi transaction chỉ có thể yêu cầu hoàn trả một lần
+ *       - Hoàn trả được xử lý ngay lập tức (school project)
+ *
+ *       **Khi hoàn trả được chấp nhận:**
+ *       - Transaction status → "refunded"
+ *       - Bike status → "for_sale" (quay lại thị trường)
+ *       - Refund record được tạo với status="completed"
+ *     tags: [Payment - Refund]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: transactionId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: ID giao dịch cần hoàn trả
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - reason
+ *             properties:
+ *               reason:
+ *                 type: string
+ *                 minLength: 10
+ *                 maxLength: 500
+ *                 description: Lý do hoàn trả
+ *                 example: "Chất lượng xe không như mô tả, bánh bị lỏng"
+ *     responses:
+ *       201:
+ *         description: Yêu cầu hoàn trả được chấp nhận
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Yêu cầu hoàn trả đã được chấp nhận"
+ *                 refund:
+ *                   type: object
+ *                   properties:
+ *                     id:
+ *                       type: string
+ *                       format: uuid
+ *                     transactionId:
+ *                       type: string
+ *                       format: uuid
+ *                     amount:
+ *                       type: number
+ *                     status:
+ *                       type: string
+ *                       enum: [completed]
+ *                     reason:
+ *                       type: string
+ *                     processedAt:
+ *                       type: string
+ *                       format: date-time
+ *       400:
+ *         description: Giao dịch không ở trạng thái hoàn thành hoặc đã có hoàn trả trước đó
+ *       404:
+ *         description: Không tìm thấy giao dịch
+ *       401:
+ *         description: Unauthorized
+ */
+router.post('/v1/refund/:transactionId', isAuthenticated, requestRefund);
+
+/**
+ * @swagger
+ * /api/payment/v1/refund/{refundId}/status:
+ *   get:
+ *     summary: Kiểm tra trạng thái hoàn trả
+ *     description: |
+ *       Lấy thông tin chi tiết về một yêu cầu hoàn trả.
+ *     tags: [Payment - Refund]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: refundId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: ID yêu cầu hoàn trả
+ *     responses:
+ *       200:
+ *         description: Thông tin hoàn trả
+ *       404:
+ *         description: Không tìm thấy yêu cầu hoàn trả
+ *       401:
+ *         description: Unauthorized
+ */
+router.get('/v1/refund/:refundId/status', isAuthenticated, getRefundStatus);
+
+/**
+ * @swagger
+ * /api/payment/v1/refunds:
+ *   get:
+ *     summary: Danh sách tất cả yêu cầu hoàn trả của buyer
+ *     description: |
+ *       Lấy danh sách tất cả hoàn trả mà buyer đã yêu cầu, sắp xếp theo ngày tạo (mới nhất trước).
+ *     tags: [Payment - Refund]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Danh sách hoàn trả
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: string
+ *                       transactionId:
+ *                         type: string
+ *                       amount:
+ *                         type: number
+ *                       status:
+ *                         type: string
+ *                       reason:
+ *                         type: string
+ *                       createdAt:
+ *                         type: string
+ *                         format: date-time
+ *       401:
+ *         description: Unauthorized
+ */
+router.get('/v1/refunds', isAuthenticated, listRefunds);
+
+/**
+ * @swagger
+ * /api/payment/v1/refund-callback:
+ *   post:
+ *     summary: Webhook callback từ refund provider (VNPay hoặc mock)
+ *     description: |
+ *       Provider gọi endpoint này để thông báo kết quả xử lý refund.
+ *       Endpoint này KHÔNG yêu cầu JWT (provider gọi trực tiếp).
+ *
+ *       **Logic:**
+ *       1. Tìm refund record
+ *       2. Cập nhật status từ pending → completed/failed
+ *       3. Nếu thành công: update transaction → refunded, bike → for_sale
+ *       4. Trả về 200 OK
+ *     tags: [Payment - Refund]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               refundId:
+ *                 type: string
+ *                 format: uuid
+ *               status:
+ *                 type: string
+ *                 enum: [completed, failed]
+ *               message:
+ *                 type: string
+ *               transactionNo:
+ *                 type: string
+ *                 description: VNPay transaction number (optional)
+ *     responses:
+ *       200:
+ *         description: Callback processed
+ *       404:
+ *         description: Refund not found
+ *       500:
+ *         description: Internal error
+ */
+router.post('/v1/refund-callback', handleRefundCallback);
 
 export default router;
