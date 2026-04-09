@@ -1,16 +1,135 @@
 import { Request, Response } from 'express';
 import { db } from '../db';
-import { bikes, brands, models, users, transactions, reports, categories, reportReasons, inspections, messages } from '../db/schema';
-import { desc, eq, and, or, isNotNull, sql } from 'drizzle-orm';
+import { bikes, brands, models, users, transactions, reports, categories, reportReasons, inspections, messages, payouts, deliveries, wishlists, conversationThreads } from '../db/schema';
+import { desc, eq, and, or, isNotNull, sql, inArray, count, sum, gte, type SQL } from 'drizzle-orm';
 import { UserPublic, ApiResponse } from '../models';
 import { mapTransactionsWithShippingAlias, withShippingAddressAlias } from '../utils/transactionResponse';
+
+// ============= DASHBOARD THỐNG KÊ =============
+
+export const getDashboard = async (_req: Request, res: Response) => {
+  try {
+    const [userStats] = await db
+      .select({
+        total: count(),
+        buyers: count(sql`CASE WHEN ${users.role} = 'buyer' THEN 1 END`),
+        sellers: count(sql`CASE WHEN ${users.role} = 'seller' THEN 1 END`),
+        inspectors: count(sql`CASE WHEN ${users.role} = 'inspector' THEN 1 END`),
+        admins: count(sql`CASE WHEN ${users.role} = 'admin' THEN 1 END`),
+      })
+      .from(users);
+
+    const [bikeStats] = await db
+      .select({
+        total: count(),
+        pending: count(sql`CASE WHEN ${bikes.status} = 'pending' THEN 1 END`),
+        approved: count(sql`CASE WHEN ${bikes.status} = 'approved' THEN 1 END`),
+        rejected: count(sql`CASE WHEN ${bikes.status} = 'rejected' THEN 1 END`),
+        hidden: count(sql`CASE WHEN ${bikes.status} = 'hidden' THEN 1 END`),
+        reserved: count(sql`CASE WHEN ${bikes.status} = 'reserved' THEN 1 END`),
+        sold: count(sql`CASE WHEN ${bikes.status} = 'sold' THEN 1 END`),
+      })
+      .from(bikes);
+
+    const [txStats] = await db
+      .select({
+        total: count(),
+        pending: count(sql`CASE WHEN ${transactions.status} = 'pending' THEN 1 END`),
+        approved: count(sql`CASE WHEN ${transactions.status} = 'approved' THEN 1 END`),
+        completed: count(sql`CASE WHEN ${transactions.status} = 'completed' THEN 1 END`),
+        cancelled: count(sql`CASE WHEN ${transactions.status} = 'cancelled' THEN 1 END`),
+        totalRevenue: sum(sql`CASE WHEN ${transactions.status} = 'completed' THEN ${transactions.amount} ELSE 0 END`),
+        totalSystemFees: sum(sql`CASE WHEN ${transactions.status} = 'completed' THEN ${transactions.systemFee} ELSE 0 END`),
+      })
+      .from(transactions);
+
+    const [reportStats] = await db
+      .select({
+        total: count(),
+        pending: count(sql`CASE WHEN ${reports.status} = 'pending' THEN 1 END`),
+        resolved: count(sql`CASE WHEN ${reports.status} = 'resolved' THEN 1 END`),
+        rejected: count(sql`CASE WHEN ${reports.status} = 'rejected' THEN 1 END`),
+      })
+      .from(reports);
+
+    const [inspectionStats] = await db
+      .select({
+        total: count(),
+        passed: count(sql`CASE WHEN ${inspections.status} = 'passed' THEN 1 END`),
+        failed: count(sql`CASE WHEN ${inspections.status} = 'failed' THEN 1 END`),
+        inProgress: count(sql`CASE WHEN ${inspections.status} = 'in_progress' THEN 1 END`),
+      })
+      .from(inspections);
+
+    // Monthly revenue (last 12 months)
+    const monthlyRevenue = await db
+      .select({
+        month: sql<string>`TO_CHAR(${transactions.createdAt}, 'YYYY-MM')`,
+        revenue: sum(transactions.amount),
+        fees: sum(transactions.systemFee),
+        count: count(),
+      })
+      .from(transactions)
+      .where(
+        and(
+          eq(transactions.status, 'completed'),
+          gte(transactions.createdAt, sql`NOW() - INTERVAL '12 months'`)
+        )
+      )
+      .groupBy(sql`TO_CHAR(${transactions.createdAt}, 'YYYY-MM')`)
+      .orderBy(sql`TO_CHAR(${transactions.createdAt}, 'YYYY-MM')`);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        users: userStats,
+        bikes: bikeStats,
+        transactions: { ...txStats, totalRevenue: Number(txStats.totalRevenue) || 0, totalSystemFees: Number(txStats.totalSystemFees) || 0 },
+        reports: reportStats,
+        inspections: inspectionStats,
+        monthlyRevenue: monthlyRevenue.map((r) => ({ ...r, revenue: Number(r.revenue) || 0, fees: Number(r.fees) || 0 })),
+      },
+      message: 'Dashboard statistics fetched successfully',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching dashboard statistics',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
 
 // ============= QUẢN LÝ XE ĐẠP =============
 
 // Lấy danh sách xe đạp
 export const getAllBikes = async (req: Request, res: Response) => {
   try {
+    const { search, status, sort, page = '1', limit = '20' } = req.query;
+    const pageNum = parseInt(page as string) || 1;
+    const limitNum = parseInt(limit as string) || 20;
+    const offset = (pageNum - 1) * limitNum;
+
+    const filters: SQL[] = [];
+    if (status && typeof status === 'string') {
+      filters.push(eq(bikes.status, status));
+    }
+    if (search && typeof search === 'string' && search.trim()) {
+      const term = `%${search.trim()}%`;
+      filters.push(sql`${bikes.title} ILIKE ${term}`);
+    }
+
+    const whereClause = filters.length > 0 ? and(...filters) : undefined;
+
+    let orderByClause: any = [desc(bikes.createdAt)];
+    if (sort === 'price_asc') orderByClause = [sql`${bikes.price} ASC`];
+    else if (sort === 'price_desc') orderByClause = [desc(bikes.price)];
+    else if (sort === 'oldest') orderByClause = [sql`${bikes.createdAt} ASC`];
+
+    const [totalResult] = await db.select({ count: count() }).from(bikes).where(whereClause);
+
     const allBikes = await db.query.bikes.findMany({
+      where: whereClause,
       with: {
         seller: {
           columns: {
@@ -27,13 +146,16 @@ export const getAllBikes = async (req: Request, res: Response) => {
           }
         }
       },
-      orderBy: [desc(bikes.createdAt)]
+      orderBy: orderByClause,
+      limit: limitNum,
+      offset,
     });
     
     const response: ApiResponse = {
       success: true,
       data: allBikes,
-      message: 'Bikes fetched successfully'
+      message: 'Bikes fetched successfully',
+      meta: { page: pageNum, limit: limitNum, total: Number(totalResult.count) },
     };
     
     res.status(200).json(response);
@@ -264,7 +386,31 @@ export const getPendingApprovalBikes = async (req: Request, res: Response) => {
 // Lấy danh sách người dùng
 export const getAllUser = async (req: Request, res: Response) => {
   try {
+    const { search, role, page = '1', limit = '20' } = req.query;
+    const pageNum = parseInt(page as string) || 1;
+    const limitNum = parseInt(limit as string) || 20;
+    const offset = (pageNum - 1) * limitNum;
+
+    const filters: SQL[] = [];
+    if (role && typeof role === 'string') {
+      filters.push(eq(users.role, role));
+    }
+    if (search && typeof search === 'string' && search.trim()) {
+      const term = `%${search.trim()}%`;
+      const searchFilter = or(
+        sql`${users.name} ILIKE ${term}`,
+        sql`${users.email} ILIKE ${term}`,
+        sql`${users.phone} ILIKE ${term}`
+      );
+      if (searchFilter) filters.push(searchFilter);
+    }
+
+    const whereClause = filters.length > 0 ? and(...filters) : undefined;
+
+    const [totalResult] = await db.select({ count: count() }).from(users).where(whereClause);
+
     const allUsers = await db.query.users.findMany({
+      where: whereClause,
       columns: {
         id: true,
         email: true,
@@ -274,15 +420,18 @@ export const getAllUser = async (req: Request, res: Response) => {
         role: true,
         createdAt: true,
         updatedAt: true,
-        password: false, // Không select password vì lý do bảo mật
+        password: false,
       },
-      orderBy: [desc(users.createdAt)]
+      orderBy: [desc(users.createdAt)],
+      limit: limitNum,
+      offset,
     });
     
     const response: ApiResponse<UserPublic[]> = {
       success: true,
       data: allUsers as UserPublic[],
-      message: 'Users fetched successfully'
+      message: 'Users fetched successfully',
+      meta: { page: pageNum, limit: limitNum, total: Number(totalResult.count) },
     };
     
     res.status(200).json(response);
@@ -484,7 +633,7 @@ const ADMIN_TX_FULL_NAME_MAX_LEN = 255;
 export const updateTransaction = async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
-    const { status, notes, address, shippingAddress, fullName } = req.body;
+    const { status, notes, address, shippingAddress, fullName, systemFee } = req.body;
     
     const updateData: any = { updatedAt: new Date() };
     if (status !== undefined) updateData.status = status;
@@ -518,6 +667,19 @@ export const updateTransaction = async (req: Request, res: Response) => {
           });
         }
         updateData.fullName = t || null;
+      }
+    }
+
+    if (systemFee !== undefined) {
+      const fee = parseFloat(systemFee);
+      if (isNaN(fee) || fee < 0) {
+        return res.status(400).json({ success: false, message: 'systemFee phải là số >= 0' });
+      }
+      updateData.systemFee = fee;
+      // Recalculate sellerNetAmount if we have the transaction
+      const [tx] = await db.select({ amount: transactions.amount }).from(transactions).where(eq(transactions.id, id));
+      if (tx) {
+        updateData.sellerNetAmount = tx.amount - fee;
       }
     }
 
@@ -690,27 +852,60 @@ export const resolveReport = async (req: Request, res: Response) => {
           });
 
           if (bike && ['approved', 'reserved', 'sold'].includes(bike.status)) {
-            // Delete related records first (cascade delete manually)
-            // Delete transactions related to this bike
-            await tx.delete(transactions).where(eq(transactions.bikeId, resolvedReport.reportedBikeId));
-            
-            // Delete inspections related to this bike
-            await tx.delete(inspections).where(eq(inspections.bikeId, resolvedReport.reportedBikeId));
-            
-            // Clear bike references in messages (set to NULL since it's optional)
+            const bikeIdToDelete = resolvedReport.reportedBikeId;
+
+            // 1. Collect transaction IDs for this bike (needed to clear FK references from other tables)
+            const bikeTxns = await tx
+              .select({ id: transactions.id, deliveryId: transactions.deliveryId })
+              .from(transactions)
+              .where(eq(transactions.bikeId, bikeIdToDelete));
+            const txnIds = bikeTxns.map((t) => t.id);
+            const deliveryIds = bikeTxns.map((t) => t.deliveryId).filter((d): d is string => d !== null);
+
+            // 2. Clear reports.transactionId FK → transactions (THIS was the missing step causing 500)
+            if (txnIds.length > 0) {
+              await tx
+                .update(reports)
+                .set({ transactionId: null })
+                .where(inArray(reports.transactionId, txnIds));
+            }
+
+            // 3. Delete payouts referencing these transactions
+            if (txnIds.length > 0) {
+              await tx.delete(payouts).where(inArray(payouts.transactionId, txnIds));
+            }
+
+            // 4. Delete transactions
+            await tx.delete(transactions).where(eq(transactions.bikeId, bikeIdToDelete));
+
+            // 5. Delete orphaned deliveries (no longer referenced)
+            if (deliveryIds.length > 0) {
+              await tx.delete(deliveries).where(inArray(deliveries.id, deliveryIds));
+            }
+
+            // 6. Delete inspections
+            await tx.delete(inspections).where(eq(inspections.bikeId, bikeIdToDelete));
+
+            // 7. Delete wishlists for this bike
+            await tx.delete(wishlists).where(eq(wishlists.bikeId, bikeIdToDelete));
+
+            // 8. Clear messages.bikeId for messages in other threads that reference this bike
             await tx
               .update(messages)
               .set({ bikeId: null })
-              .where(eq(messages.bikeId, resolvedReport.reportedBikeId));
-            
-            // Clear bike references in other reports
+              .where(eq(messages.bikeId, bikeIdToDelete));
+
+            // 9. Delete conversation threads for this bike (messages cascade-delete via threadId FK)
+            await tx.delete(conversationThreads).where(eq(conversationThreads.bikeId, bikeIdToDelete));
+
+            // 10. Clear bike references in other reports
             await tx
               .update(reports)
               .set({ reportedBikeId: null })
-              .where(eq(reports.reportedBikeId, resolvedReport.reportedBikeId));
-            
-            // Delete the bike itself
-            await tx.delete(bikes).where(eq(bikes.id, resolvedReport.reportedBikeId));
+              .where(eq(reports.reportedBikeId, bikeIdToDelete));
+
+            // 11. Delete the bike itself
+            await tx.delete(bikes).where(eq(bikes.id, bikeIdToDelete));
             autoResolutionMessage = `[Auto] Bike deleted due to "${reportToResolve.reason.name}" violation`;
             console.log(`[Report Auto-Resolution] Bike ${resolvedReport.reportedBikeId} and related data deleted for report ${id}`);
           } else if (bike) {
@@ -843,10 +1038,32 @@ export const updateCategory = async (req: Request, res: Response) => {
 };;
 
 export const deleteCategory = async (req: Request, res: Response) => {
-  res.status(501).json({
-    success: false,
-    message: 'Category management not implemented yet. Please create categories schema first.'
-  });
+  try {
+    const id = req.params.id as string;
+
+    const [category] = await db.select().from(categories).where(eq(categories.id, id));
+    if (!category) {
+      return res.status(404).json({ success: false, message: 'Category not found' });
+    }
+
+    // Check if any bikes reference this category
+    const [bikeCount] = await db.select({ count: count() }).from(bikes).where(eq(bikes.categoryId, id));
+    if (Number(bikeCount.count) > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Không thể xóa — có ${bikeCount.count} xe đang thuộc danh mục này. Hãy chuyển xe sang danh mục khác trước.`,
+      });
+    }
+
+    await db.delete(categories).where(eq(categories.id, id));
+    res.status(200).json({ success: true, message: 'Category deleted successfully' });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error deleting category',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
 };
 
 // ============= QUẢN LÝ LOẠI KHIẾU NẠI (REPORT REASONS) =============

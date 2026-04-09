@@ -1,5 +1,5 @@
 -- Refunds table for tracking buyer refund requests
-CREATE TABLE "refunds" (
+CREATE TABLE IF NOT EXISTS "refunds" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"transaction_id" uuid NOT NULL REFERENCES "transactions"("id"),
 	"buyer_id" uuid NOT NULL REFERENCES "users"("id"),
@@ -13,8 +13,8 @@ CREATE TABLE "refunds" (
 	"updated_at" timestamp NOT NULL DEFAULT now()
 );
 --> statement-breakpoint
-CREATE INDEX "idx_refunds_transaction_id" ON "refunds"("transaction_id");
+CREATE INDEX IF NOT EXISTS "idx_refunds_transaction_id" ON "refunds"("transaction_id");
 --> statement-breakpoint
-CREATE INDEX "idx_refunds_buyer_id" ON "refunds"("buyer_id");
+CREATE INDEX IF NOT EXISTS "idx_refunds_buyer_id" ON "refunds"("buyer_id");
 --> statement-breakpoint
-CREATE INDEX "idx_refunds_seller_id" ON "refunds"("seller_id");
+CREATE INDEX IF NOT EXISTS "idx_refunds_seller_id" ON "refunds"("seller_id");

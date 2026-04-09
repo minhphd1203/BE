@@ -176,6 +176,13 @@
       "when": 1775667982110,
       "tag": "0025_create_brands_models",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1775667982111,
+      "tag": "0026_add_frame_size_to_bikes",
+      "breakpoints": true
     }
   ]
 }

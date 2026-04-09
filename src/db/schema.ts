@@ -65,6 +65,7 @@ export const bikes = pgTable('bikes', {
   condition: varchar('condition', { length: 50 }).notNull(),
   mileage: integer('mileage'),
   color: varchar('color', { length: 50 }),
+  frameSize: varchar('frame_size', { length: 20 }),
   images: text('images').array().notNull().default([]),
   video: text('video'), // optional video URL
   status: varchar('status', { length: 50 }).notNull().default('pending'), // pending, approved, rejected, hidden, reserved, sold

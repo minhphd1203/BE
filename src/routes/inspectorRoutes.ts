@@ -8,6 +8,9 @@ import {
   getMyInspections,
   getInspectionDetail,
   updateInspection,
+  getDisputeReports,
+  getDisputeDetail,
+  addDisputeNote,
 } from '../controllers/inspectorController';
 import { isInspector } from '../middleware/authMiddleware';
 import {
@@ -307,5 +310,103 @@ router.get('/v1/inspections/:inspectionId', isInspector, getInspectionDetail);
  *         description: Inspection not found
  */
 router.put('/v1/inspections/:inspectionId', isInspector, parseInspectionUpdateMultipart, updateInspection);
+
+// ================== DISPUTE SUPPORT ==================
+
+/**
+ * @swagger
+ * /api/inspector/v1/disputes:
+ *   get:
+ *     summary: Danh sách báo cáo tranh chấp liên quan xe đã kiểm định
+ *     description: Trả về các report mà reportedBikeId là xe inspector đã kiểm định.
+ *     tags: [Inspector - Disputes]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [pending, resolved, rejected]
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *     responses:
+ *       200:
+ *         description: Danh sách tranh chấp
+ */
+router.get('/v1/disputes', isInspector, getDisputeReports);
+
+/**
+ * @swagger
+ * /api/inspector/v1/disputes/{reportId}:
+ *   get:
+ *     summary: Chi tiết báo cáo tranh chấp
+ *     tags: [Inspector - Disputes]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: reportId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: Chi tiết báo cáo
+ *       403:
+ *         description: Không phải inspector của xe liên quan
+ *       404:
+ *         description: Báo cáo không tồn tại
+ */
+router.get('/v1/disputes/:reportId', isInspector, getDisputeDetail);
+
+/**
+ * @swagger
+ * /api/inspector/v1/disputes/{reportId}/note:
+ *   post:
+ *     summary: Thêm nhận xét kỹ thuật vào báo cáo tranh chấp
+ *     description: |
+ *       Inspector gửi đánh giá/nhận xét kỹ thuật để hỗ trợ admin giải quyết tranh chấp.
+ *       Nhận xét được ghi vào resolution của report (admin sẽ thấy khi xử lý).
+ *     tags: [Inspector - Disputes]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: reportId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [note]
+ *             properties:
+ *               note:
+ *                 type: string
+ *                 minLength: 10
+ *                 example: "Xe đã kiểm tra, khung không có vết nứt. Phanh hoạt động bình thường."
+ *     responses:
+ *       200:
+ *         description: Nhận xét đã thêm thành công
+ *       400:
+ *         description: Nhận xét quá ngắn hoặc báo cáo đã resolved
+ *       403:
+ *         description: Không phải inspector của xe liên quan
+ */
+router.post('/v1/disputes/:reportId/note', isInspector, addDisputeNote);
 
 export default router;

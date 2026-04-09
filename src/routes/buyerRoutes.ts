@@ -757,7 +757,7 @@ router.get('/v1/report-reasons', isAuthenticated, getReportReasons);
  *         application/json:
  *           schema:
  *             type: object
- *             required: [sellerId, rating]
+ *             required: [sellerId, transactionId, rating]
  *             properties:
  *               sellerId:
  *                 type: string
@@ -765,7 +765,7 @@ router.get('/v1/report-reasons', isAuthenticated, getReportReasons);
  *               transactionId:
  *                 type: string
  *                 format: uuid
- *                 description: ID giao dịch để xác minh (tùy chọn nhưng khuyến nghị)
+ *                 description: ID giao dịch đã hoàn tất (bắt buộc)
  *               rating:
  *                 type: integer
  *                 minimum: 1

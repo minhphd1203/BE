@@ -286,6 +286,45 @@ export const getCategoriesForSeller = async (_req: Request, res: Response) => {
   }
 };
 
+// ============= BRANDS & MODELS =============
+
+export const getBrandsForSeller = async (_req: Request, res: Response) => {
+  try {
+    const rows = await db
+      .select({ id: brands.id, name: brands.name })
+      .from(brands)
+      .orderBy(asc(brands.name));
+
+    res.status(200).json({ success: true, data: rows });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi khi lấy danh sách hãng xe',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+export const getModelsByBrandForSeller = async (req: Request, res: Response) => {
+  try {
+    const { brandId } = req.params;
+
+    const rows = await db
+      .select({ id: models.id, brandId: models.brandId, name: models.name })
+      .from(models)
+      .where(eq(models.brandId, brandId))
+      .orderBy(asc(models.name));
+
+    res.status(200).json({ success: true, data: rows });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi khi lấy danh sách dòng xe',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
 // ============= BIKE LISTINGS =============
 
 /**
@@ -941,7 +980,7 @@ export const getMyTransactions = async (req: Request, res: Response) => {
     const sellerId = req.user!.userId;
     const { status, page = 1, limit = 10 } = req.query;
 
-    const allowedTxStatuses = ['pending', 'completed', 'cancelled'];
+    const allowedTxStatuses = ['pending', 'approved', 'completed', 'cancelled'];
     const filters: any[] = [eq(transactions.sellerId, sellerId)];
     if (status) {
       const s = String(status);

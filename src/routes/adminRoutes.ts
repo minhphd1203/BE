@@ -1,5 +1,6 @@
 import express from 'express';
 import { 
+  getDashboard,
   getAllBikes, 
   approveBike,
   rejectBike,
@@ -38,6 +39,24 @@ import { isAdmin } from '../middleware/authMiddleware';
 import { messageUpload, attachFileUrl } from '../middleware/messageUploadMiddleware';
 
 const router = express.Router();
+
+// ================== DASHBOARD ==================
+
+/**
+ * @swagger
+ * /api/admin/v1/dashboard:
+ *   get:
+ *     summary: Thống kê tổng quan hệ thống
+ *     description: |
+ *       Trả về số liệu tổng hợp: users, bikes, transactions, reports, inspections, doanh thu theo tháng (12 tháng gần nhất).
+ *     tags: [Admin - Dashboard]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Dashboard statistics
+ */
+router.get('/v1/dashboard', isAdmin, getDashboard);
 
 // ================== BIKE MANAGEMENT ==================
 

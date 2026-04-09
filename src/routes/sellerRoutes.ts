@@ -13,6 +13,8 @@ import {
   updateTransactionStatus,
   getMyReviews,
   getCategoriesForSeller,
+  getBrandsForSeller,
+  getModelsByBrandForSeller,
 } from '../controllers/sellerController';
 import { isAuthenticated, requireRole } from '../middleware/authMiddleware';
 import { parseBikeListingMultipart, parseBikeUpdateMultipart } from '../middleware/bikeUploadMiddleware';
@@ -58,6 +60,81 @@ router.get('/v1/dashboard', getDashboard);
  *         description: Unauthorized
  */
 router.get('/v1/categories', getCategoriesForSeller);
+
+// ============= BRANDS & MODELS =============
+
+/**
+ * @swagger
+ * /api/seller/v1/brands:
+ *   get:
+ *     summary: Danh sách hãng xe (dropdown đăng/sửa tin)
+ *     tags: [Seller]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Danh sách hãng xe
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: string
+ *                         format: uuid
+ *                       name:
+ *                         type: string
+ */
+router.get('/v1/brands', getBrandsForSeller);
+
+/**
+ * @swagger
+ * /api/seller/v1/brands/{brandId}/models:
+ *   get:
+ *     summary: Danh sách dòng xe theo hãng (dropdown đăng/sửa tin)
+ *     tags: [Seller]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: brandId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: ID của hãng xe
+ *     responses:
+ *       200:
+ *         description: Danh sách dòng xe
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: string
+ *                         format: uuid
+ *                       brandId:
+ *                         type: string
+ *                         format: uuid
+ *                       name:
+ *                         type: string
+ */
+router.get('/v1/brands/:brandId/models', getModelsByBrandForSeller);
 
 // ============= BIKE LISTINGS =============
 

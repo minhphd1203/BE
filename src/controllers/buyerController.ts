@@ -94,6 +94,7 @@ export const searchBikes = async (req: Request, res: Response) => {
       maxPrice,
       condition,
       color,
+      frameSize,
       sortBy = 'createdAt',
       sortOrder = 'desc',
       page = 1,
@@ -164,6 +165,10 @@ export const searchBikes = async (req: Request, res: Response) => {
 
     if (categoryId) {
       optionalFilters.push(eq(bikes.categoryId, categoryId as string));
+    }
+
+    if (frameSize) {
+      optionalFilters.push(eq(bikes.frameSize, frameSize as string));
     }
 
     // Determine sort field

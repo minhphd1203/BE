@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { db } from '../db';
-import { bikes, inspections, users, categories, messages } from '../db/schema';
-import { eq, desc, asc, and, or, sql } from 'drizzle-orm';
+import { bikes, inspections, users, categories, messages, reports, transactions } from '../db/schema';
+import { eq, desc, asc, and, or, sql, count } from 'drizzle-orm';
 import { InspectionFormData, ApiResponse } from '../models';
 import {
   mergeInspectionProofUrls,
@@ -896,9 +896,172 @@ export const updateInspection = async (req: Request, res: Response) => {
   }
 };
 
-// Old message functions removed - use unified messageController instead
-// Message operations are now handled by messageController:
-// - getAllConversations() - GET /api/messages/conversations
-// - getConversationDetails() - GET /api/messages/:partnerId  
-// - sendMessage() - POST /api/messages/:partnerId
-// - closeConversation() - DELETE /api/messages/:partnerId/close
+// ============= DISPUTE SUPPORT =============
+
+/**
+ * GET /api/inspector/v1/disputes
+ * Danh sách báo cáo liên quan đến xe mà inspector đã kiểm định.
+ */
+export const getDisputeReports = async (req: Request, res: Response) => {
+  try {
+    const inspectorId = req.user!.userId;
+    const { status, page = '1', limit = '10' } = req.query;
+    const pageNum = parseInt(page as string) || 1;
+    const limitNum = parseInt(limit as string) || 10;
+    const offset = (pageNum - 1) * limitNum;
+
+    // Find bikes this inspector has inspected
+    const inspectedBikes = await db
+      .select({ bikeId: inspections.bikeId })
+      .from(inspections)
+      .where(eq(inspections.inspectorId, inspectorId));
+    const bikeIds = inspectedBikes.map((r) => r.bikeId);
+
+    if (bikeIds.length === 0) {
+      return res.status(200).json({ success: true, data: [], meta: { page: pageNum, limit: limitNum, total: 0 } });
+    }
+
+    const filters: any[] = [sql`${reports.reportedBikeId} IN (${sql.join(bikeIds.map((id) => sql`${id}`), sql`, `)})`];
+    if (status && typeof status === 'string') {
+      filters.push(eq(reports.status, status));
+    }
+    const whereClause = and(...filters);
+
+    const [totalResult] = await db.select({ count: count() }).from(reports).where(whereClause);
+
+    const rows = await db.query.reports.findMany({
+      where: whereClause,
+      with: {
+        reporter: { columns: { id: true, name: true, role: true } },
+        reportedUser: { columns: { id: true, name: true, role: true } },
+        reportedBike: { columns: { id: true, title: true, images: true } },
+        reason: { columns: { id: true, name: true } },
+      },
+      orderBy: [desc(reports.createdAt)],
+      limit: limitNum,
+      offset,
+    });
+
+    res.status(200).json({
+      success: true,
+      data: rows,
+      meta: { page: pageNum, limit: limitNum, total: Number(totalResult.count) },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi khi lấy danh sách tranh chấp',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
+ * GET /api/inspector/v1/disputes/:reportId
+ * Chi tiết báo cáo tranh chấp (chỉ báo cáo liên quan xe inspector đã kiểm định).
+ */
+export const getDisputeDetail = async (req: Request, res: Response) => {
+  try {
+    const inspectorId = req.user!.userId;
+    const { reportId } = req.params;
+
+    const report = await db.query.reports.findFirst({
+      where: eq(reports.id, reportId),
+      with: {
+        reporter: { columns: { id: true, name: true, email: true, phone: true, role: true } },
+        reportedUser: { columns: { id: true, name: true, email: true, phone: true, role: true } },
+        reportedBike: true,
+        transaction: true,
+        reason: true,
+      },
+    });
+
+    if (!report) {
+      return res.status(404).json({ success: false, message: 'Báo cáo không tồn tại' });
+    }
+
+    // Verify inspector has inspected this bike
+    if (report.reportedBikeId) {
+      const inspection = await db.query.inspections.findFirst({
+        where: and(eq(inspections.bikeId, report.reportedBikeId), eq(inspections.inspectorId, inspectorId)),
+      });
+      if (!inspection) {
+        return res.status(403).json({ success: false, message: 'Bạn không phải inspector của xe liên quan' });
+      }
+    } else {
+      return res.status(403).json({ success: false, message: 'Báo cáo không liên quan đến xe cụ thể' });
+    }
+
+    res.status(200).json({ success: true, data: report });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi khi lấy chi tiết tranh chấp',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+/**
+ * POST /api/inspector/v1/disputes/:reportId/note
+ * Inspector gửi nhận xét / đánh giá kỹ thuật vào báo cáo tranh chấp.
+ * Ghi vào report.resolution (nếu chưa resolve) để admin tham khảo.
+ */
+export const addDisputeNote = async (req: Request, res: Response) => {
+  try {
+    const inspectorId = req.user!.userId;
+    const { reportId } = req.params;
+    const { note } = req.body;
+
+    if (!note || typeof note !== 'string' || note.trim().length < 10) {
+      return res.status(400).json({ success: false, message: 'Nhận xét phải có ít nhất 10 ký tự' });
+    }
+
+    const report = await db.query.reports.findFirst({
+      where: eq(reports.id, reportId),
+    });
+
+    if (!report) {
+      return res.status(404).json({ success: false, message: 'Báo cáo không tồn tại' });
+    }
+
+    if (report.status === 'resolved') {
+      return res.status(400).json({ success: false, message: 'Báo cáo đã được giải quyết, không thể thêm nhận xét' });
+    }
+
+    // Verify inspector inspected this bike
+    if (report.reportedBikeId) {
+      const inspection = await db.query.inspections.findFirst({
+        where: and(eq(inspections.bikeId, report.reportedBikeId), eq(inspections.inspectorId, inspectorId)),
+      });
+      if (!inspection) {
+        return res.status(403).json({ success: false, message: 'Bạn không phải inspector của xe liên quan' });
+      }
+    } else {
+      return res.status(403).json({ success: false, message: 'Báo cáo không liên quan đến xe cụ thể' });
+    }
+
+    // Fetch inspector name
+    const [inspector] = await db.select({ name: users.name }).from(users).where(eq(users.id, inspectorId));
+    const timestamp = new Date().toISOString();
+    const prefix = `[Inspector ${inspector?.name || inspectorId} — ${timestamp}]`;
+    const existingResolution = report.resolution || '';
+    const newResolution = existingResolution
+      ? `${existingResolution}\n\n${prefix}\n${note.trim()}`
+      : `${prefix}\n${note.trim()}`;
+
+    await db.update(reports).set({ resolution: newResolution, updatedAt: new Date() }).where(eq(reports.id, reportId));
+
+    res.status(200).json({
+      success: true,
+      message: 'Nhận xét đã được thêm vào báo cáo',
+      data: { reportId, resolution: newResolution },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi khi thêm nhận xét',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
