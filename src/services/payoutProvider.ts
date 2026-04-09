@@ -74,18 +74,22 @@ export async function sendPayoutRequest(request: PayoutRequest): Promise<void> {
 /**
  * Mock transfer provider - simulates bank processing.
  * 90% success rate for testing failure scenarios.
- * Processing time: 2-7 seconds.
+ * Processing time: 0.5-2 seconds.
+ * 
+ * Returns immediately so caller can continue, but processes asynchronously.
+ * DO NOT await this - it returns immediately by design (like real API).
  */
 async function sendToMockProvider(request: PayoutRequest): Promise<void> {
-  const processingTime = Math.random() * 5000 + 2000; // 2-7 seconds
+  const processingTime = Math.random() * 1500 + 500; // 0.5-2 seconds (faster for testing)
   const shouldSucceed = Math.random() > 0.1; // 90% success rate
 
   console.log(
-    `[Payout Mock] Processing ${request.externalPayoutId} (${request.amount} VND) ` +
+    `[Payout Mock] Queued ${request.externalPayoutId} (${request.amount} VND) ` +
     `to ${request.bankAccountHolder} → ${request.bankCode} ${request.bankAccountNumber}`
   );
 
-  // Schedule async processing
+  // Schedule async processing (fire and forget, like real API)
+  // Returns immediately - processing happens in background
   setTimeout(async () => {
     try {
       const result: PayoutResult = {
@@ -97,7 +101,7 @@ async function sendToMockProvider(request: PayoutRequest): Promise<void> {
 
       console.log(`[Payout Mock] Result: ${result.status}`, { externalPayoutId: request.externalPayoutId });
 
-      // Call webhook
+      // Call webhook to notify system
       await callPayoutWebhook(request, result);
 
       // Update payout record in DB
@@ -107,7 +111,7 @@ async function sendToMockProvider(request: PayoutRequest): Promise<void> {
     }
   }, processingTime);
 
-  console.log(`[Payout Mock] Queued for processing in ${Math.round(processingTime / 1000)}s`);
+  console.log(`[Payout Mock] Will process in ~${Math.round(processingTime / 100) / 10}s`);
 }
 
 // ============= STP PROVIDER (WHEN READY) =============
