@@ -18,6 +18,9 @@ import { eq } from 'drizzle-orm';
  * All request/response handling stays the same.
  */
 
+// Track which payouts have already had webhooks called to prevent duplicates
+const processedPayoutIds = new Set<string>();
+
 export interface PayoutRequest {
   payoutId: string;
   externalPayoutId: string;
@@ -56,7 +59,7 @@ function signPayoutRequest(data: Record<string, any>): string {
  */
 export async function sendPayoutRequest(request: PayoutRequest): Promise<void> {
   const provider = process.env.PAYOUT_PROVIDER || 'mock';
-  console.log(`[Payout Provider] Sending to provider: ${provider}`);
+  console.log(`[Payout Request] 📤 Sending to provider: ${provider} | Payout ID: ${request.payoutId} | Amount: ${request.amount} VND`);
 
   switch (provider) {
     case 'stp':
@@ -85,13 +88,15 @@ async function sendToMockProvider(request: PayoutRequest): Promise<void> {
 
   console.log(
     `[Payout Mock] Queued ${request.externalPayoutId} (${request.amount} VND) ` +
-    `to ${request.bankAccountHolder} → ${request.bankCode} ${request.bankAccountNumber}`
+    `to ${request.bankAccountHolder} → ${request.bankCode} ${request.bankAccountNumber} | Success: ${shouldSucceed}`
   );
 
   // Schedule async processing (fire and forget, like real API)
   // Returns immediately - processing happens in background
   setTimeout(async () => {
     try {
+      console.log(`[Payout Mock] Processing started for ${request.externalPayoutId}`);
+      
       const result: PayoutResult = {
         success: shouldSucceed,
         status: shouldSucceed ? 'completed' : 'failed',
@@ -99,19 +104,22 @@ async function sendToMockProvider(request: PayoutRequest): Promise<void> {
         failureReason: !shouldSucceed ? 'Insufficient balance in merchant account' : undefined,
       };
 
-      console.log(`[Payout Mock] Result: ${result.status}`, { externalPayoutId: request.externalPayoutId });
+      console.log(`[Payout Mock] ✅ RESULT: ${result.status}`, { externalPayoutId: request.externalPayoutId, payoutId: request.payoutId });
 
       // Call webhook to notify system
+      console.log(`[Payout Mock] About to call webhook for ${request.payoutId}`);
       await callPayoutWebhook(request, result);
 
       // Update payout record in DB
       await updatePayoutFromResult(request.payoutId, result);
+      console.log(`[Payout Mock] ✅ Completed for ${request.externalPayoutId}`);
     } catch (error) {
       console.error('[Payout Mock] Processing error:', error);
+      console.error('[Payout Mock] Error stack:', (error as Error).stack);
     }
   }, processingTime);
 
-  console.log(`[Payout Mock] Will process in ~${Math.round(processingTime / 100) / 10}s`);
+  console.log(`[Payout Mock] ⏱️ Will process in ~${Math.round(processingTime / 100) / 10}s (${Math.round(processingTime)}ms)`);
 }
 
 // ============= STP PROVIDER (WHEN READY) =============
@@ -236,9 +244,19 @@ async function sendToPayOO(request: PayoutRequest): Promise<void> {
 
 /**
  * Call backend webhook with payout result.
+ * Prevents duplicate webhook calls for the same payout ID.
  * Mirrors how VNPay sends IPN callbacks.
  */
 async function callPayoutWebhook(request: PayoutRequest, result: PayoutResult): Promise<void> {
+  // Prevent duplicate webhook calls for the same payout
+  if (processedPayoutIds.has(request.payoutId)) {
+    console.log(`[Payout Webhook] 🚫 ALREADY PROCESSED: ${request.payoutId}, skipping duplicate`);
+    return;
+  }
+  
+  processedPayoutIds.add(request.payoutId);
+  console.log(`[Payout Webhook] 📌 Marked as processed: ${request.payoutId}`);
+
   const callbackData = {
     payoutId: request.payoutId,
     externalPayoutId: request.externalPayoutId,
@@ -250,7 +268,8 @@ async function callPayoutWebhook(request: PayoutRequest, result: PayoutResult): 
   const signature = signPayoutRequest(callbackData);
 
   try {
-    console.log(`[Payout] Calling webhook: ${request.webhookUrl}`);
+    console.log(`[Payout Webhook] 🔗 Calling webhook: ${request.webhookUrl}`);
+    console.log(`[Payout Webhook] 📦 Payload:`, { payoutId: request.payoutId, status: result.status });
 
     // Create abort controller for timeout
     const controller = new AbortController();
@@ -271,13 +290,13 @@ async function callPayoutWebhook(request: PayoutRequest, result: PayoutResult): 
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      console.error(`[Payout] Webhook failed: ${response.status}`);
+      console.error(`[Payout Webhook] ❌ Failed: ${response.status} ${response.statusText}`);
       // In production, implement retry logic here
     } else {
-      console.log('[Payout] Webhook delivered successfully');
+      console.log('[Payout Webhook] ✅ Delivered successfully');
     }
   } catch (error) {
-    console.error('[Payout] Webhook delivery error:', error);
+    console.error('[Payout Webhook] ❌ Delivery error:', error);
     // In production, implement retry queue here
   }
 }

@@ -748,18 +748,30 @@ export const createPayout = async (req: Request, res: Response) => {
       where: eq(payouts.transactionId, transactionId),
     });
 
-    if (existingPayout && existingPayout.status !== 'failed') {
-      console.log(`[Payout] ❌ Payout already exists for transaction. Status: ${existingPayout.status}`);
-      return res.status(400).json({
-        success: false,
-        message: `Payout đã tồn tại (trạng thái: ${existingPayout.status}). Chỉ có thể tạo payout mới khi payout trước đó thất bại.`,
-        payoutId: existingPayout.id,
-      });
-    }
-
-    // If previous payout failed, seller can request again - log this
-    if (existingPayout && existingPayout.status === 'failed') {
-      console.log(`[Payout] 🔄 Previous payout ${existingPayout.id} failed. Seller requesting new payout.`);
+    // If payout already exists, handle by status:
+    // - pending/processing: Return existing (already in flight, prevent duplicate sends)
+    // - completed: Return existing (done)
+    // - failed: Delete it and allow retry (let user try again with fresh attempt)
+    if (existingPayout) {
+      if (existingPayout.status === 'failed') {
+        console.log(`[Payout] Previous attempt FAILED for transaction. Deleting failed record to allow retry...`);
+        await db.delete(payouts).where(eq(payouts.id, existingPayout.id));
+        console.log(`[Payout] ✅ Deleted failed payout ${existingPayout.id}. Will create new attempt.`);
+      } else {
+        // pending, processing, or completed - return existing
+        console.log(`[Payout] Payout already exists for transaction. Status: ${existingPayout.status}. Returning existing.`);
+        return res.status(200).json({
+          success: true,
+          message: `Payout already exists (status: ${existingPayout.status})`,
+          data: {
+            id: existingPayout.id,
+            status: existingPayout.status,
+            amount: existingPayout.amount,
+            externalPayoutId: existingPayout.externalPayoutId,
+            createdAt: existingPayout.createdAt,
+          },
+        });
+      }
     }
 
     // ===== Create payout record =====
@@ -782,6 +794,16 @@ export const createPayout = async (req: Request, res: Response) => {
 
     console.log(`[Payout] Created payout ${newPayout.id} for transaction ${transactionId}, amount: ${payoutAmount} (system fee: ${transaction.systemFee || 0})`);
 
+    // ===== Mark as processing to prevent duplicate sends =====
+    // Transition: pending → processing to ensure only one send to provider
+    const [processingPayout] = await db
+      .update(payouts)
+      .set({ status: 'processing' })
+      .where(eq(payouts.id, newPayout.id))
+      .returning();
+
+    console.log(`[Payout] Marked payout as processing: ${processingPayout.id}`);
+
     // ===== Send to payout provider (mock or real based on .env) =====
     // PAYOUT_PROVIDER env var determines which provider to use:
     // - 'mock' (default): Simulated transfers for testing
@@ -791,9 +813,10 @@ export const createPayout = async (req: Request, res: Response) => {
     const webhookUrl = `${process.env.BACKEND_URL || 'http://localhost:3000'}/api/payment/v1/payout-callback`;
 
     try {
+      console.log(`[Payout Controller] 📤 Sending to provider...`);
       await sendPayoutRequest({
-        payoutId: newPayout.id,
-        externalPayoutId: newPayout.externalPayoutId || '',
+        payoutId: processingPayout.id,
+        externalPayoutId: processingPayout.externalPayoutId || '',
         amount: payoutAmount,
         bankCode: seller.bankCode,
         bankAccountNumber: seller.bankAccountNumber,
@@ -801,21 +824,28 @@ export const createPayout = async (req: Request, res: Response) => {
         bankBranch: seller.bankBranch ?? undefined,
         webhookUrl,
       });
+      
+      console.log(`[Payout Controller] ✅ Sent to provider: ${processingPayout.id}`);
     } catch (error) {
-      console.error('[Payout] Provider error:', error);
-      // Payout record created successfully, provider call failed
-      // Provider will retry or user can retry payout creation
+      console.error('[Payout] Provider send error:', error);
+      // Mark back to pending so user can retry
+      await db
+        .update(payouts)
+        .set({ status: 'pending' })
+        .where(eq(payouts.id, processingPayout.id));
+      
+      throw error; // Re-throw so FE knows there was an error
     }
 
     return res.status(201).json({
       success: true,
       message: 'Yêu cầu rút tiền đã được gửi',
       data: {
-        id: newPayout.id,
-        status: newPayout.status,
-        amount: newPayout.amount,
-        externalPayoutId: newPayout.externalPayoutId,
-        createdAt: newPayout.createdAt,
+        id: processingPayout.id,
+        status: processingPayout.status,
+        amount: processingPayout.amount,
+        externalPayoutId: processingPayout.externalPayoutId,
+        createdAt: processingPayout.createdAt,
       },
     });
   } catch (error) {
@@ -847,6 +877,8 @@ export const handlePayoutCallback = async (req: Request, res: Response) => {
   try {
     const { payoutId, externalPayoutId, status, providerTransactionId, failureReason, signature } = req.body;
 
+    console.log(`[Payout Callback] 📨 RECEIVED: ${payoutId} | Status: ${status}`);
+
     // ===== Verify signature =====
     const callbackData = {
       payoutId,
@@ -857,7 +889,7 @@ export const handlePayoutCallback = async (req: Request, res: Response) => {
     };
 
     if (!verifyPayoutSignature(callbackData, signature)) {
-      console.error('[Payout] Invalid signature for callback', { payoutId, externalPayoutId });
+      console.error('[Payout Callback] ❌ Invalid signature for callback', { payoutId, externalPayoutId });
       return res.status(401).json({
         success: false,
         message: 'Invalid signature',
@@ -870,7 +902,7 @@ export const handlePayoutCallback = async (req: Request, res: Response) => {
     });
 
     if (!payout) {
-      console.error('[Payout] Payout not found', { payoutId });
+      console.error('[Payout Callback] ❌ Payout not found', { payoutId });
       return res.status(404).json({
         success: false,
         message: 'Payout not found',
@@ -879,7 +911,7 @@ export const handlePayoutCallback = async (req: Request, res: Response) => {
 
     // ===== Idempotent check: Skip if already processed =====
     if (payout.status !== 'pending' && payout.status !== 'processing') {
-      console.log(`[Payout] Idempotent: Already handled (${payout.status})`, { payoutId });
+      console.log(`[Payout Callback] 🚫 Already handled (${payout.status})`, { payoutId });
       // Return 200 OK even for duplicate - webhook provider should not retry
       return res.status(200).json({
         success: true,
@@ -890,7 +922,7 @@ export const handlePayoutCallback = async (req: Request, res: Response) => {
     // ===== Update payout status =====
     const validStatuses = ['completed', 'failed'];
     if (!validStatuses.includes(status)) {
-      console.error('[Payout] Invalid status', { payoutId, status });
+      console.error('[Payout Callback] ❌ Invalid status', { payoutId, status });
       return res.status(400).json({
         success: false,
         message: 'Invalid status',
@@ -915,7 +947,7 @@ export const handlePayoutCallback = async (req: Request, res: Response) => {
       .set(updateData)
       .where(eq(payouts.id, payoutId));
 
-    console.log(`[Payout] Updated to ${status}`, {
+    console.log(`[Payout Callback] ✅ Updated to ${status}`, {
       payoutId,
       externalPayoutId,
       completedAt: updateData.completedAt,
@@ -1005,6 +1037,11 @@ export const getPayoutStatus = async (req: Request, res: Response) => {
  */
 export const getPayoutByTransactionId = async (req: Request, res: Response) => {
   try {
+    // Disable caching for real-time payout status updates
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    
     const sellerId = req.user!.userId;
     const { transactionId } = req.params as { transactionId: string };
 

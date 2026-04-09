@@ -128,6 +128,7 @@ export const updateDeliveryStatus = async (req: Request, res: Response) => {
         ...withShippingAddressAlias(updatedTxn!),
         deliveryStatus: del?.deliveryStatus || null,
         deliveryNotes: del?.deliveryNotes || null,
+        receiptConfirmedAt: del?.receiptConfirmedAt || null,
       };
 
       return res.status(200).json({
@@ -180,6 +181,7 @@ export const updateDeliveryStatus = async (req: Request, res: Response) => {
         ...withShippingAddressAlias(updatedTxn!),
         deliveryStatus: updatedDel?.deliveryStatus || null,
         deliveryNotes: updatedDel?.deliveryNotes || null,
+        receiptConfirmedAt: updatedDel?.receiptConfirmedAt || null,
       };
 
       return res.status(200).json({
@@ -262,6 +264,7 @@ export const confirmReceipt = async (req: Request, res: Response) => {
         ...withShippingAddressAlias(again![0]),
         deliveryStatus: againDel?.deliveryStatus || null,
         deliveryNotes: againDel?.deliveryNotes || null,
+        receiptConfirmedAt: againDel?.receiptConfirmedAt || null,
       };
 
       return res.status(200).json({
@@ -292,6 +295,7 @@ export const confirmReceipt = async (req: Request, res: Response) => {
       ...withShippingAddressAlias(updated![0]),
       deliveryStatus: updatedDel?.deliveryStatus || null,
       deliveryNotes: updatedDel?.deliveryNotes || null,
+      receiptConfirmedAt: updatedDel?.receiptConfirmedAt || null,
     };
 
     return res.status(200).json({
@@ -338,16 +342,19 @@ export const getFulfillmentDetail = async (req: Request, res: Response) => {
     // Get delivery data if exists
     let deliveryStatus = null;
     let deliveryNotes = null;
+    let receiptConfirmedAt = null;
     if (row[0].deliveryId) {
       const [del] = await db.select().from(deliveries).where(eq(deliveries.id, row[0].deliveryId)).limit(1);
       deliveryStatus = del?.deliveryStatus || null;
       deliveryNotes = del?.deliveryNotes || null;
+      receiptConfirmedAt = del?.receiptConfirmedAt || null;
     }
 
     const responseData = {
       ...withShippingAddressAlias(row[0]),
       deliveryStatus,
       deliveryNotes,
+      receiptConfirmedAt,
     };
 
     return res.status(200).json({
