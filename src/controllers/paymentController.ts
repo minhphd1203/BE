@@ -604,15 +604,6 @@ export const vnpayIPN = async (req: Request, res: Response) => {
       return res.json({ RspCode: '99', Message: 'Failed to update bike status' });
     }
 
-    if (bikeStatus === 'sold') {
-      await markFulfillmentPreparingAfterBikeSold(
-        transaction.bikeId,
-        transaction.buyerId,
-        transaction.sellerId
-      );
-      console.log(`[VNPay IPN] ✓ Fulfillment initialized (preparing) for sold bike ${transaction.bikeId}`);
-    }
-
     console.log(`[VNPay IPN] ✓ Payment success for transaction ${transaction.id}`);
     return res.json({ RspCode: '00', Message: 'Confirm success' });
   } catch (error) {
@@ -819,7 +810,7 @@ export const createPayout = async (req: Request, res: Response) => {
     return res.status(201).json({
       success: true,
       message: 'Yêu cầu rút tiền đã được gửi',
-      payout: {
+      data: {
         id: newPayout.id,
         status: newPayout.status,
         amount: newPayout.amount,
@@ -982,7 +973,7 @@ export const getPayoutStatus = async (req: Request, res: Response) => {
 
     return res.status(200).json({
       success: true,
-      payout: {
+      data: {
         id: payout.id,
         status: payout.status,
         amount: payout.amount,
@@ -998,6 +989,70 @@ export const getPayoutStatus = async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error('[Payout] Status error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Lỗi lấy thông tin rút tiền',
+      error: process.env.NODE_ENV === 'development' ? (error as Error).message : undefined,
+    });
+  }
+};
+
+// ============= GET PAYOUT BY TRANSACTION ID =============
+
+/**
+ * GET /api/payment/v1/payout/by-transaction/:transactionId
+ * Seller checks payout status for a specific transaction.
+ */
+export const getPayoutByTransactionId = async (req: Request, res: Response) => {
+  try {
+    const sellerId = req.user!.userId;
+    const { transactionId } = req.params as { transactionId: string };
+
+    // Verify seller owns this transaction
+    const transaction = await db.query.transactions.findFirst({
+      where: and(
+        eq(transactions.id, transactionId),
+        eq(transactions.sellerId, sellerId)
+      ),
+    });
+
+    if (!transaction) {
+      return res.status(404).json({
+        success: false,
+        message: 'Giao dịch không tồn tại hoặc không phải của bạn',
+      });
+    }
+
+    // Get payout for this transaction
+    const payout = await db.query.payouts.findFirst({
+      where: eq(payouts.transactionId, transactionId),
+    });
+
+    if (!payout) {
+      // No payout found - return null (normal case)
+      return res.status(200).json({
+        success: true,
+        data: null,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        id: payout.id,
+        status: payout.status,
+        amount: payout.amount,
+        externalPayoutId: payout.externalPayoutId,
+        providerTransactionId: payout.providerTransactionId,
+        completedAt: payout.completedAt,
+        failureReason: payout.failureReason,
+        webhookReceivedAt: payout.webhookReceivedAt,
+        createdAt: payout.createdAt,
+        updatedAt: payout.updatedAt,
+      },
+    });
+  } catch (error) {
+    console.error('[Payout] By Transaction error:', error);
     return res.status(500).json({
       success: false,
       message: 'Lỗi lấy thông tin rút tiền',
@@ -1031,7 +1086,14 @@ export const requestRefund = async (req: Request, res: Response) => {
     const { transactionId } = req.params as { transactionId: string };
     const { reason, reportId } = req.body as { reason: string; reportId?: string };
 
+    // Defensive logging
+    console.log('[requestRefund] Raw request body:', req.body);
+    console.log('[requestRefund] transactionId:', transactionId);
+    console.log('[requestRefund] reason:', reason, 'type:', typeof reason);
+    console.log('[requestRefund] reportId:', reportId);
+
     if (!reason || reason.trim().length === 0) {
+      console.log('[requestRefund] ❌ Missing or empty reason');
       return res.status(400).json({
         success: false,
         message: 'Vui lòng cung cấp lý do hoàn trả',
@@ -1081,6 +1143,7 @@ export const requestRefund = async (req: Request, res: Response) => {
     });
 
     if (existingRefund) {
+      console.log('[requestRefund] ⚠️  Refund already exists:', existingRefund.id);
       return res.status(400).json({
         success: false,
         message: 'Giao dịch này đã có yêu cầu hoàn trả',
@@ -1102,12 +1165,13 @@ export const requestRefund = async (req: Request, res: Response) => {
       status: 'pending', // Start as pending, will be completed by webhook or immediately by mock
     }).returning();
 
-    console.log(`[Refund] ✓ Created refund ${newRefund.id} for transaction ${transactionId}, amount: ${transaction.amount}`);
+    console.log(`[Refund] ✓ Created refund ${newRefund.id} for transaction ${transactionId}, amount: ${transaction.amount}, reason: ${reason.trim()}`);
 
     // Start refund process with provider (VNPay or mock)
     const webhookUrl = `${process.env.BACKEND_URL || 'http://localhost:3000'}/api/payment/v1/refund-callback`;
 
     try {
+      console.log('[Refund] Calling sendRefundRequest...');
       const refundResponse = await sendRefundRequest({
         refundId: newRefund.id,
         transactionNo: vnpayTransactionNo,
@@ -1116,10 +1180,11 @@ export const requestRefund = async (req: Request, res: Response) => {
         webhookUrl,
       });
 
-      console.log(`[Refund] Provider response: status=${refundResponse.status}`);
+      console.log(`[Refund] Provider response received:`, refundResponse);
 
       // If mock-instant, immediately complete the refund
       if (refundResponse.status === 'completed') {
+        console.log(`[Refund] Mock-instant mode detected, completing refund immediately`);
         await db.update(refunds)
           .set({ status: 'completed', processedAt: new Date() })
           .where(eq(refunds.id, newRefund.id));
@@ -1135,9 +1200,10 @@ export const requestRefund = async (req: Request, res: Response) => {
 
         console.log(`[Refund] ✓ Refund completed immediately (mock-instant mode)`);
       }
-    } catch (error) {
-      console.error('[Refund] Provider error:', error);
+    } catch (providerError) {
+      console.error('[Refund] Provider error caught:', providerError instanceof Error ? providerError.message : String(providerError));
       // Refund record created, provider will retry or user can try again
+      // Don't throw - let user know refund is pending
     }
 
     return res.status(201).json({
@@ -1154,11 +1220,11 @@ export const requestRefund = async (req: Request, res: Response) => {
       },
     });
   } catch (error) {
-    console.error('[Refund] Error:', error);
+    console.error('[Refund] Error caught:', error instanceof Error ? error.stack : String(error));
     return res.status(500).json({
       success: false,
       message: 'Lỗi khi xử lý yêu cầu hoàn trả',
-      error: process.env.NODE_ENV === 'development' ? (error as Error).message : undefined,
+      error: process.env.NODE_ENV === 'development' ? (error instanceof Error ? error.message : String(error)) : undefined,
     });
   }
 };
@@ -1301,10 +1367,6 @@ export const handleRefundCallback = async (req: Request, res: Response) => {
       status,
       processedAt: new Date(),
     };
-
-    if (status === 'failed') {
-      updateData.rejectedReason = message || 'Refund processing failed';
-    }
 
     await db.update(refunds)
       .set(updateData)

@@ -770,9 +770,20 @@ export const getTransactionDetail = async (req: Request, res: Response) => {
       });
     }
 
+    const responseData = withShippingAddressAlias(transaction);
+    console.log('[getTransactionDetail] Response data with bikeId and sellerId:', {
+      id: responseData.id,
+      bikeId: responseData.bikeId,
+      sellerId: responseData.sellerId,
+      bike_id: responseData.bike?.id,
+      seller_id: responseData.seller?.id,
+      all_keys: Object.keys(responseData),
+      full_response: JSON.stringify(responseData),
+    });
+
     res.status(200).json({
       success: true,
-      data: withShippingAddressAlias(transaction),
+      data: responseData,
       message: 'Chi tiết giao dịch fetched successfully',
     });
   } catch (error) {
@@ -1114,6 +1125,16 @@ export const submitReport = async (req: Request, res: Response) => {
 
     const { reportedUserId, reportedBikeId, reasonId, reasonText, description, transactionId } = req.body;
 
+    console.log('[submitReport] Request body received:', {
+      reportedUserId,
+      reportedBikeId,
+      reasonId,
+      reasonText,
+      description,
+      transactionId,
+      full_body: JSON.stringify(req.body),
+    });
+
     // Validate: reasonId must be provided
     if (!reasonId) {
       return res.status(400).json({ 
@@ -1130,6 +1151,11 @@ export const submitReport = async (req: Request, res: Response) => {
     }
 
     if (!reportedUserId && !reportedBikeId) {
+      console.log('[submitReport] Missing IDs:', {
+        reportedUserId,
+        reportedBikeId,
+        received: { reportedUserId: Boolean(reportedUserId), reportedBikeId: Boolean(reportedBikeId) },
+      });
       return res.status(400).json({
         success: false,
         message: 'Phải cung cấp ít nhất reportedUserId hoặc reportedBikeId',
@@ -1267,6 +1293,13 @@ export const getMyReports = async (req: Request, res: Response) => {
           with: {
             brand: { columns: { id: true, name: true } },
             model: { columns: { id: true, name: true } },
+          },
+        },
+        reason: {
+          columns: {
+            id: true,
+            name: true,
+            description: true,
           },
         },
         resolver: {

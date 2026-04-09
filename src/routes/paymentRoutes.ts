@@ -1,5 +1,5 @@
 import express from 'express';
-import { createPaymentUrl, createRemainingPaymentUrl, vnpayReturn, vnpayIPN, getPaymentStatus, createPayout, getPayoutStatus, handlePayoutCallback, requestRefund, getRefundStatus, listRefunds, handleRefundCallback } from '../controllers/paymentController';
+import { createPaymentUrl, createRemainingPaymentUrl, vnpayReturn, vnpayIPN, getPaymentStatus, createPayout, getPayoutStatus, getPayoutByTransactionId, handlePayoutCallback, requestRefund, getRefundStatus, listRefunds, handleRefundCallback } from '../controllers/paymentController';
 import { isAuthenticated } from '../middleware/authMiddleware';
 
 const router = express.Router();
@@ -395,6 +395,65 @@ router.post('/v1/payout/create/:transactionId', isAuthenticated, createPayout);
  *         description: Unauthorized
  */
 router.get('/v1/payout/status/:payoutId', isAuthenticated, getPayoutStatus);
+
+/**
+ * @swagger
+ * /api/payment/v1/payout/by-transaction/{transactionId}:
+ *   get:
+ *     summary: Get payout status for a transaction
+ *     description: |
+ *       Retrieves payout information for a specific transaction.
+ *       Returns null if no payout exists for this transaction.
+ *       
+ *       **Seller verification:** Only sellers can query their own transactions.
+ *     tags: [Payment - Seller Payout]
+ *     parameters:
+ *       - in: path
+ *         name: transactionId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Transaction ID
+ *     responses:
+ *       200:
+ *         description: Payout info or null
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 payout:
+ *                   type: object
+ *                   nullable: true
+ *                   properties:
+ *                     id:
+ *                       type: string
+ *                       format: uuid
+ *                     status:
+ *                       type: string
+ *                       enum: [pending, processing, completed, failed]
+ *                     amount:
+ *                       type: number
+ *                     failureReason:
+ *                       type: string
+ *                       nullable: true
+ *                     createdAt:
+ *                       type: string
+ *                       format: date-time
+ *                     completedAt:
+ *                       type: string
+ *                       format: date-time
+ *                       nullable: true
+ *       401:
+ *         description: Unauthorized - not seller
+ *       404:
+ *         description: Transaction not found or does not belong to seller
+ */
+router.get('/v1/payout/by-transaction/:transactionId', isAuthenticated, getPayoutByTransactionId);
 
 /**
  * @swagger

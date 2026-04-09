@@ -120,10 +120,19 @@ export const updateDeliveryStatus = async (req: Request, res: Response) => {
           )
         );
 
-      const updated = await selectValidTransactionColumns().where(eq(transactions.id, id)).limit(1);
+      // Fetch updated transaction WITH delivery data
+      const [updatedTxn] = await selectValidTransactionColumns().where(eq(transactions.id, id)).limit(1);
+      const [del] = await db.select().from(deliveries).where(eq(deliveries.id, newDelId)).limit(1);
+
+      const responseData = {
+        ...withShippingAddressAlias(updatedTxn!),
+        deliveryStatus: del?.deliveryStatus || null,
+        deliveryNotes: del?.deliveryNotes || null,
+      };
+
       return res.status(200).json({
         success: true,
-        data: withShippingAddressAlias(updated![0]),
+        data: responseData,
         message: 'Đã tạo delivery record với trạng thái "preparing".',
       });
     }
@@ -163,10 +172,19 @@ export const updateDeliveryStatus = async (req: Request, res: Response) => {
         })
         .where(eq(deliveries.id, delivery.id));
 
-      const updated = await selectValidTransactionColumns().where(eq(transactions.id, id)).limit(1);
+      // Fetch updated transaction WITH updated delivery data
+      const [updatedTxn] = await selectValidTransactionColumns().where(eq(transactions.id, id)).limit(1);
+      const [updatedDel] = await db.select().from(deliveries).where(eq(deliveries.id, delivery.id)).limit(1);
+
+      const responseData = {
+        ...withShippingAddressAlias(updatedTxn!),
+        deliveryStatus: updatedDel?.deliveryStatus || null,
+        deliveryNotes: updatedDel?.deliveryNotes || null,
+      };
+
       return res.status(200).json({
         success: true,
-        data: withShippingAddressAlias(updated![0]),
+        data: responseData,
         message: 'Đã cập nhật trạng thái giao hàng thành "delivering".',
       });
     }
@@ -234,9 +252,21 @@ export const confirmReceipt = async (req: Request, res: Response) => {
     
     if (delivery?.receiptConfirmedAt) {
       const again = await selectValidTransactionColumns().where(eq(transactions.id, id)).limit(1);
+      let againDel = null;
+      if (row[0].deliveryId) {
+        const result = await db.select().from(deliveries).where(eq(deliveries.id, row[0].deliveryId)).limit(1);
+        againDel = result[0] || null;
+      }
+      
+      const responseData = {
+        ...withShippingAddressAlias(again![0]),
+        deliveryStatus: againDel?.deliveryStatus || null,
+        deliveryNotes: againDel?.deliveryNotes || null,
+      };
+
       return res.status(200).json({
         success: true,
-        data: withShippingAddressAlias(again![0]),
+        data: responseData,
         message: 'Đơn đã được xác nhận nhận hàng trước đó.',
       });
     }
@@ -252,9 +282,21 @@ export const confirmReceipt = async (req: Request, res: Response) => {
     }
 
     const updated = await selectValidTransactionColumns().where(eq(transactions.id, id)).limit(1);
+    let updatedDel = null;
+    if (row[0].deliveryId) {
+      const result = await db.select().from(deliveries).where(eq(deliveries.id, row[0].deliveryId)).limit(1);
+      updatedDel = result[0] || null;
+    }
+    
+    const responseData = {
+      ...withShippingAddressAlias(updated![0]),
+      deliveryStatus: updatedDel?.deliveryStatus || null,
+      deliveryNotes: updatedDel?.deliveryNotes || null,
+    };
+
     return res.status(200).json({
       success: true,
-      data: withShippingAddressAlias(updated![0]),
+      data: responseData,
       message: 'Đã xác nhận nhận hàng. Trạng thái cập nhật thành "delivered".',
     });
   } catch (error) {
@@ -293,9 +335,24 @@ export const getFulfillmentDetail = async (req: Request, res: Response) => {
       return res.status(403).json({ success: false, message: 'Forbidden' });
     }
 
+    // Get delivery data if exists
+    let deliveryStatus = null;
+    let deliveryNotes = null;
+    if (row[0].deliveryId) {
+      const [del] = await db.select().from(deliveries).where(eq(deliveries.id, row[0].deliveryId)).limit(1);
+      deliveryStatus = del?.deliveryStatus || null;
+      deliveryNotes = del?.deliveryNotes || null;
+    }
+
+    const responseData = {
+      ...withShippingAddressAlias(row[0]),
+      deliveryStatus,
+      deliveryNotes,
+    };
+
     return res.status(200).json({
       success: true,
-      data: withShippingAddressAlias(row![0]),
+      data: responseData,
       message: 'Chi tiết đơn / giao hàng',
     });
   } catch (error) {

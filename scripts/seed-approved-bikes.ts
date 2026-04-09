@@ -1,25 +1,80 @@
 import { db } from '../src/db';
 import { bikes, users, categories, brands, models } from '../src/db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import * as dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
+import bcrypt from 'bcryptjs';
+import { client } from '../src/db';
 
 dotenv.config();
+
+// Helper function to get uploaded bike images
+function getUploadedBikeImages(): string[] {
+  const uploadsDir = path.join(__dirname, '../uploads/bikes');
+  
+  // Check if directory exists
+  if (!fs.existsSync(uploadsDir)) {
+    console.log('⚠️  uploads/bikes directory not found, using placeholder images');
+    return [];
+  }
+  
+  const files = fs.readdirSync(uploadsDir);
+  
+  // Filter only image files and map them to URLs
+  const imageFiles = files.filter(file => {
+    const ext = path.extname(file).toLowerCase();
+    return ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext);
+  });
+
+  console.log(`📸 Found ${imageFiles.length} bike images in uploads folder\n`);
+  
+  return imageFiles.map(file => `/uploads/bikes/${file}`);
+}
+
+// Helper function for random selections
+const random = {
+  int: (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min,
+  pick: <T>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)],
+  picks: <T>(arr: T[], count: number): T[] => {
+    if (arr.length === 0) return [];
+    const shuffled = [...arr].sort(() => 0.5 - Math.random());
+    return shuffled.slice(0, Math.min(count, arr.length));
+  },
+};
 
 async function seedBikes() {
   try {
     console.log('🚴 Seeding 10 bikes for seller@beswp.com...\n');
 
-    // 1. Find seller
-    const seller = await db.query.users.findFirst({
-      where: eq(users.email, 'seller@beswp.com'),
-    });
-
-    if (!seller) {
-      console.error('❌ Seller not found: seller@beswp.com');
-      process.exit(1);
+    // 1. Create or find seller user
+    console.log('👤 Setting up seller user...');
+    let sellerUser;
+    
+    try {
+      // First try to find existing user
+      const existing = await db.select().from(users).where(eq(users.email, 'seller@beswp.com'));
+      if (existing.length > 0) {
+        sellerUser = existing[0];
+        console.log(`✅ Using existing seller: ${sellerUser.name} (${sellerUser.email})`);
+      } else {
+        // Create new seller if doesn't exist
+        const hashedPassword = await bcrypt.hash('Test@123', 10);
+        const [newSeller] = await db.insert(users).values({
+          email: 'seller@beswp.com',
+          password: hashedPassword,
+          name: 'Test Seller',
+          phone: '0987654321',
+          role: 'user'
+        }).returning();
+        
+        sellerUser = newSeller;
+        console.log(`✅ Created seller: ${newSeller.name} (${newSeller.email})`);
+      }
+    } catch (err: any) {
+      console.error('Error with seller:', err.message);
+      throw err;
     }
-
-    console.log(`✅ Found seller: ${seller.name} (${seller.id})`);
 
     // 2. Get a category (or use null)
     const category = await db.query.categories.findFirst();
@@ -155,7 +210,7 @@ async function seedBikes() {
     
     for (const brandName of uniqueBrands) {
       let brandRecord = await db.query.brands.findFirst({
-        where: (b, { eq }) => eq(b.name, brandName)
+        where: sql`LOWER(${brands.name}) = LOWER(${brandName})`
       });
       
       if (!brandRecord) {
@@ -171,6 +226,9 @@ async function seedBikes() {
     
     console.log(`✓ Brands ready: ${brandMap.size} brands`);
     
+    // Get uploaded images
+    const uploadedImages = getUploadedBikeImages();
+    
     // Process bikes and resolve brand/model IDs
     const processedBikes = [];
     for (const bike of bikeData) {
@@ -180,10 +238,7 @@ async function seedBikes() {
       
       if (!modelId) {
         let existingModel = await db.query.models.findFirst({
-          where: (m, { eq, and }) => and(
-            eq(m.brandId, brandId),
-            eq(m.name, bike.model)
-          )
+          where: sql`${models.brandId} = ${brandId}::uuid AND LOWER(${models.name}) = LOWER(${bike.model})`
         });
         
         if (!existingModel) {
@@ -199,6 +254,15 @@ async function seedBikes() {
         modelMap.set(modelKey, modelId);
       }
       
+      // Select 1-3 random images from uploaded images (or use placeholder if none uploaded)
+      let bikeImages = [];
+      if (uploadedImages.length > 0) {
+        const numImages = random.int(1, Math.min(3, uploadedImages.length));
+        bikeImages = random.picks(uploadedImages, numImages);
+      } else {
+        bikeImages = [`https://via.placeholder.com/600x400?text=${bike.brand}`];
+      }
+      
       processedBikes.push({
         title: bike.title,
         description: bike.description,
@@ -209,19 +273,61 @@ async function seedBikes() {
         condition: bike.condition,
         mileage: bike.mileage,
         color: bike.color,
-        sellerId: seller.id,
+        sellerId: sellerUser.id,
         categoryId,
         status: 'approved',
         isVerified: 'verified',
         inspectionStatus: 'completed',
-        images: [`https://via.placeholder.com/600x400?text=${bike.brand}`],
+        images: bikeImages,
       });
     }
 
-    const insertedBikes = await db
-      .insert(bikes)
-      .values(processedBikes)
-      .returning();
+    const insertedBikes = [];
+    
+    // Build a map of getBrand and getModel for fetching names
+    const getBrandNameById = new Map<string, string>();
+    const getModelNameById = new Map<string, string>();
+    
+    for (const [brandName, brandId] of brandMap) {
+      getBrandNameById.set(brandId, brandName);
+    }
+    for (const [modelKey, modelId] of modelMap) {
+      // Extract model name from modelKey (format: "BrandName_ModelName")
+      const [, modelName] = modelKey.split('_');
+      getModelNameById.set(modelId, modelName);
+    }
+    
+    for (let i = 0; i < processedBikes.length; i++) {
+      try {
+        console.log(`\n🚲 Inserting bike ${i + 1}/10: ${processedBikes[i].title}`);
+        const bike = processedBikes[i];
+        
+        // Get brand and model names for backward compatibility
+        const brandName = getBrandNameById.get(bike.brandId) || 'Unknown';
+        const modelName = getModelNameById.get(bike.modelId) || 'Unknown';
+        
+        // Use raw SQL client to insert
+        const result = await client`
+          INSERT INTO bikes (
+            title, description, brand, model, brand_id, model_id, year, price, 
+            condition, mileage, color, images, status, is_verified, 
+            inspection_status, category_id, seller_id
+          ) VALUES (
+            ${bike.title}, ${bike.description}, ${brandName}, ${modelName},
+            ${bike.brandId}, ${bike.modelId}, ${bike.year}, ${bike.price}, 
+            ${bike.condition}, ${bike.mileage}, ${bike.color}, ${bike.images}, 
+            ${bike.status}, ${bike.isVerified}, ${bike.inspectionStatus}, 
+            ${bike.categoryId}, ${bike.sellerId}
+          ) RETURNING *;
+        `;
+        
+        insertedBikes.push(result[0]);
+        console.log(`   ✅ Successfully inserted (ID: ${result[0].id})`);
+      } catch (insertErr: any) {
+        console.error(`   ❌ Failed to insert: ${insertErr.message}`);
+        throw insertErr;
+      }
+    }
 
     console.log(`\n✅ Successfully seeded ${insertedBikes.length} bikes!\n`);
 
@@ -234,7 +340,7 @@ async function seedBikes() {
     });
 
     console.log('📊 Summary:');
-    console.log(`   Seller: ${seller.email}`);
+    console.log(`   Seller: ${sellerUser.email}`);
     console.log(`   Bikes created: ${insertedBikes.length}`);
     console.log(`   Total value: ${insertedBikes.reduce((sum, b) => sum + b.price, 0).toLocaleString('vi-VN')} ₫`);
     console.log(`   All Status: approved`);

@@ -554,7 +554,13 @@ export const updateTransaction = async (req: Request, res: Response) => {
 
 export const getAllReports = async (req: Request, res: Response) => {
   try {
+    const { status } = req.query;
+    console.log('[getAllReports] Fetching reports with status filter:', status);
+    
+    const where = status ? eq(reports.status, String(status)) : undefined;
+    
     const allReports = await db.query.reports.findMany({
+      where,
       with: {
         reporter: {
           columns: {
@@ -576,6 +582,13 @@ export const getAllReports = async (req: Request, res: Response) => {
             title: true,
           }
         },
+        reason: {
+          columns: {
+            id: true,
+            name: true,
+            description: true,
+          }
+        },
         resolver: {
           columns: {
             id: true,
@@ -586,6 +599,8 @@ export const getAllReports = async (req: Request, res: Response) => {
       orderBy: [desc(reports.createdAt)]
     });
     
+    console.log('[getAllReports] Found', allReports.length, 'reports');
+    
     const response: ApiResponse = {
       success: true,
       data: allReports,
@@ -594,6 +609,7 @@ export const getAllReports = async (req: Request, res: Response) => {
     
     res.status(200).json(response);
   } catch (error) {
+    console.error('[getAllReports] Error:', error);
     res.status(500).json({ 
       success: false,
       message: 'Error fetching reports', 
@@ -622,6 +638,7 @@ export const resolveReport = async (req: Request, res: Response) => {
           columns: {
             autoResolveAction: true,
             name: true,
+            description: true,
           },
         },
       },
