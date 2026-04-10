@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import crypto from 'crypto';
 import QRCode from 'qrcode';
 import { db } from '../db';
-import { transactions, bikes, payouts, users, refunds } from '../db/schema';
+import { transactions, bikes, payouts, users, refunds, deliveries } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { withShippingAddressAlias } from '../utils/transactionResponse';
 import { markFulfillmentPreparingAfterBikeSold } from '../services/fulfillmentSync';
@@ -1161,6 +1161,19 @@ export const requestRefund = async (req: Request, res: Response) => {
         success: false,
         message: `Chỉ có thể hoàn trả giao dịch đã hoàn thành (hiện tại: ${transaction.status})`,
       });
+    }
+
+    // Block refund if delivery is already completed
+    if (transaction.deliveryId) {
+      const delivery = await db.query.deliveries.findFirst({
+        where: eq(deliveries.id, transaction.deliveryId),
+      });
+      if (delivery?.deliveryStatus === 'delivered') {
+        return res.status(400).json({
+          success: false,
+          message: 'Không thể hoàn trả vì đơn hàng đã được giao thành công',
+        });
+      }
     }
 
     // Check 24-hour window (optional for school project, can be removed)
